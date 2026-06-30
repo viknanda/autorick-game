@@ -461,6 +461,9 @@ class DesiMusic {
 
   scheduler() {
     if (!this.playing) return;
+    if (this.nextNoteTime < this.ctx.currentTime) {
+      this.nextNoteTime = this.ctx.currentTime;
+    }
     while (this.nextNoteTime < this.ctx.currentTime + this.scheduleAheadTime) {
       this.scheduleStep(this.currentStep, this.nextNoteTime);
       this.advanceStep();

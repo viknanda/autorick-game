@@ -95,9 +95,17 @@ const hornPad = document.getElementById('horn-pad');
 
 // Add steering event listeners
 const setupTouchButton = (btn, startFn, endFn) => {
-  btn.addEventListener('mousedown', (e) => { e.preventDefault(); startFn(); });
+  btn.addEventListener('mousedown', (e) => { 
+    e.preventDefault(); 
+    gameAudio.init(); 
+    startFn(); 
+  });
   btn.addEventListener('mouseup', (e) => { e.preventDefault(); endFn(); });
-  btn.addEventListener('touchstart', (e) => { e.preventDefault(); startFn(); });
+  btn.addEventListener('touchstart', (e) => { 
+    e.preventDefault(); 
+    gameAudio.init(); 
+    startFn(); 
+  });
   btn.addEventListener('touchend', (e) => { e.preventDefault(); endFn(); });
 };
 
@@ -107,6 +115,7 @@ setupTouchButton(rightPad, () => touchSteerRight = true, () => touchSteerRight =
 // Horn button
 const handleHornTouch = (e) => {
   e.preventDefault();
+  gameAudio.init();
   if (state.screen === 'playing') {
     gameAudio.playHorn();
     triggerHornEffect();
