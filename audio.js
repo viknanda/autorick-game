@@ -47,6 +47,22 @@ class GameAudio {
       source.connect(this.ctx.destination);
       source.start(0);
       
+      // Silent Switch Bypass Hack for iOS Safari (forces Web Audio to hardware media channel)
+      try {
+        const unlockAudio = document.createElement('audio');
+        unlockAudio.setAttribute('playsinline', '');
+        unlockAudio.setAttribute('webkit-playsinline', '');
+        unlockAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+        unlockAudio.loop = true;
+        unlockAudio.volume = 0.01;
+        const playPromise = unlockAudio.play();
+        if (playPromise !== undefined) {
+          playPromise.catch(e => console.warn("Silent audio tag play blocked:", e));
+        }
+      } catch (e) {
+        console.warn("Failed to play silent audio element:", e);
+      }
+      
       // Master Gain for easy muting/volume control
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.setValueAtTime(this.muted ? 0 : 2.5, this.ctx.currentTime);
