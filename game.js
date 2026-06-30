@@ -95,17 +95,9 @@ const hornPad = document.getElementById('horn-pad');
 
 // Add steering event listeners
 const setupTouchButton = (btn, startFn, endFn) => {
-  btn.addEventListener('mousedown', (e) => { 
-    e.preventDefault(); 
-    gameAudio.init(); 
-    startFn(); 
-  });
+  btn.addEventListener('mousedown', (e) => { e.preventDefault(); startFn(); });
   btn.addEventListener('mouseup', (e) => { e.preventDefault(); endFn(); });
-  btn.addEventListener('touchstart', (e) => { 
-    e.preventDefault(); 
-    gameAudio.init(); 
-    startFn(); 
-  });
+  btn.addEventListener('touchstart', (e) => { e.preventDefault(); startFn(); });
   btn.addEventListener('touchend', (e) => { e.preventDefault(); endFn(); });
 };
 
@@ -115,7 +107,6 @@ setupTouchButton(rightPad, () => touchSteerRight = true, () => touchSteerRight =
 // Horn button
 const handleHornTouch = (e) => {
   e.preventDefault();
-  gameAudio.init();
   if (state.screen === 'playing') {
     gameAudio.playHorn();
     triggerHornEffect();
@@ -2819,41 +2810,12 @@ function quitToMainMenu() {
   document.getElementById('start-screen').classList.remove('hidden');
 }
 
-// Carousel Route Cards click listeners (distinguishes between swipe/scroll and click/tap!)
+// Carousel Route Cards click listeners (native browser click listener guarantees user gesture activation token)
 document.querySelectorAll('.route-card').forEach(card => {
-  let startX = 0;
-  let startY = 0;
-  
-  card.addEventListener('touchstart', (e) => {
-    startX = e.touches[0].clientX;
-    startY = e.touches[0].clientY;
-  }, { passive: true });
-  
-  card.addEventListener('touchend', (e) => {
-    let diffX = Math.abs(e.changedTouches[0].clientX - startX);
-    let diffY = Math.abs(e.changedTouches[0].clientY - startY);
-    // If movement was less than 8px, treat it as a deliberate click/tap
-    if (diffX < 8 && diffY < 8) {
-      e.preventDefault(); // Prevent double triggering emulated mouse events
-      state.city = card.getAttribute('data-city') || 'mumbai';
-      gameAudio.init(); // Play sounds on click context
-      startGame();
-    }
-  }, { passive: false });
-  
-  card.addEventListener('mousedown', (e) => {
-    startX = e.clientX;
-    startY = e.clientY;
-  });
-  
-  card.addEventListener('mouseup', (e) => {
-    let diffX = Math.abs(e.clientX - startX);
-    let diffY = Math.abs(e.clientY - startY);
-    if (diffX < 8 && diffY < 8) {
-      state.city = card.getAttribute('data-city') || 'mumbai';
-      gameAudio.init();
-      startGame();
-    }
+  card.addEventListener('click', () => {
+    state.city = card.getAttribute('data-city') || 'mumbai';
+    gameAudio.init(); // Play sounds on click context (100% unlocked by native click gesture)
+    startGame();
   });
 });
 
