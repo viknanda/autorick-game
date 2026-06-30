@@ -25,11 +25,27 @@ class GameAudio {
 
   // Initialize Audio Context on first interaction (required by browsers)
   init() {
-    if (this.ctx) return;
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(e => console.warn("Failed to resume Web Audio context:", e));
+      }
+      return;
+    }
 
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContextClass();
+      
+      if (this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(e => console.warn("Failed to resume Web Audio context on creation:", e));
+      }
+
+      // Play a short silent buffer to unlock Web Audio on iOS Safari
+      const buffer = this.ctx.createBuffer(1, 1, 22050);
+      const source = this.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(this.ctx.destination);
+      source.start(0);
       
       // Master Gain for easy muting/volume control
       this.masterGain = this.ctx.createGain();
