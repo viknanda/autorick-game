@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>AutoRick Tour of India | Kids Rickshaw Arcade Game</title>
+  <!-- Google Fonts for Modern, Playful Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- Main Game Container (aspect-ratio locked) -->
+    <div id="game-container">
+      
+      <!-- Canvas for game graphics -->
+      <canvas id="game-canvas"></canvas>
+
+      <!-- Heads-Up Display (HUD) -->
+      <div id="game-hud" class="hidden">
+        <!-- Top Stats Bar -->
+        <div class="hud-top-bar">
+          <div class="hud-card score-card">
+            <span class="label">RUPEES</span>
+            <span id="score-val" class="value">₹ 0</span>
+          </div>
+          <div class="hud-card meter-card">
+            <span class="label">TOUR DISTANCE</span>
+            <span id="distance-val" class="value">0 km</span>
+          </div>
+          <div class="hud-card speed-card">
+            <span class="label">SPEED</span>
+            <span id="speed-val" class="value">0 km/h</span>
+          </div>
+        </div>
+
+        <!-- Health and Powerup Gauges -->
+        <div class="hud-gauges">
+          <div class="gauge-container health-gauge">
+            <span class="gauge-label">Rickshaw Health</span>
+            <div class="gauge-bar-outer">
+              <div id="health-bar" class="gauge-bar-inner health" style="width: 100%;"></div>
+            </div>
+          </div>
+          <div class="gauge-container shield-gauge hidden" id="shield-gauge-container">
+            <span class="gauge-label">Chai Shield! ☕</span>
+            <div class="gauge-bar-outer">
+              <div id="shield-bar" class="gauge-bar-inner shield" style="width: 0%;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Camera View Toggle Button -->
+        <button id="camera-toggle-btn" class="hud-card camera-card">
+          <span class="label">CAMERA</span>
+          <span id="camera-val" class="value">3D CAMERA</span>
+        </button>
+
+        <!-- Passenger Status Overlay -->
+        <div id="passenger-status" class="hud-card passenger-card hidden">
+          <span class="passenger-icon">🛺👨‍✈️</span>
+          <span id="passenger-msg" class="passenger-text">Drop passenger at Metro Station!</span>
+        </div>
+      </div>
+
+      <!-- Start / Splash Screen Overlay -->
+      <div id="start-screen" class="overlay">
+        <div class="overlay-card start-card">
+          <div class="splash-banner">
+            <img src="assets/autorick_splash.png" alt="AutoRick Tour of India Splash Banner" class="splash-image">
+          </div>
+          
+          <h1 class="game-title">AutoRick Tour of India</h1>
+          <p class="game-subtitle">The Ultimate Indian Road Trip for Kids!</p>
+
+          <!-- Merged Carousel Route Selection + Start Button -->
+          <div class="carousel-container">
+            <div class="carousel-label">Select Route & Start Tour! 🗺️</div>
+            <div class="route-carousel">
+              <div class="route-card pulse-hover" data-city="mumbai">
+                <div class="card-glow-overlay"></div>
+                <span class="route-emoji">🌊</span>
+                <span class="route-name">MUMBAI</span>
+                <span class="route-landmark">Sea Link</span>
+              </div>
+              <div class="route-card pulse-hover" data-city="delhi">
+                <div class="card-glow-overlay"></div>
+                <span class="route-emoji">🕌</span>
+                <span class="route-name">DELHI</span>
+                <span class="route-landmark">Red Fort</span>
+              </div>
+              <div class="route-card pulse-hover" data-city="bangalore">
+                <div class="card-glow-overlay"></div>
+                <span class="route-emoji">💻</span>
+                <span class="route-name">BENGALURU</span>
+                <span class="route-landmark">Tech Park</span>
+              </div>
+              <div class="route-card pulse-hover" data-city="chennai">
+                <div class="card-glow-overlay"></div>
+                <span class="route-emoji">🛕</span>
+                <span class="route-name">CHENNAI</span>
+                <span class="route-landmark">Clock Tower</span>
+              </div>
+              <div class="route-card pulse-hover" data-city="kolkata">
+                <div class="card-glow-overlay"></div>
+                <span class="route-emoji">🌉</span>
+                <span class="route-name">KOLKATA</span>
+                <span class="route-landmark">Howrah Bridge</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="menu-buttons" style="margin-top: 14px;">
+            <button id="how-to-play-btn" class="btn secondary-btn" style="width: 100%;">How To Play 📖</button>
+            <!-- Merged Audio Controller button -->
+            <button id="audio-toggle-btn" class="btn sound-btn" style="width: 100%; margin-top: 8px;">Audio: Sounds & Music ON 🔊⚡</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- How to Play Overlay -->
+      <div id="how-to-play-screen" class="overlay hidden">
+        <div class="overlay-card glassmorphic">
+          <h2 style="margin-top: 0; font-size: 24px;">How To Drive! 🛺</h2>
+          
+          <div class="visual-instructions">
+            <!-- Steering controls visual -->
+            <div class="visual-row">
+              <div class="visual-keys">
+                <kbd class="key-cap">◀</kbd>
+                <kbd class="key-cap">▶</kbd>
+                <span class="key-or">or</span>
+                <kbd class="key-cap">A</kbd>
+                <kbd class="key-cap">D</kbd>
+              </div>
+              <div class="visual-action">Steer Left & Right</div>
+            </div>
+            
+            <!-- Honking controls visual -->
+            <div class="visual-row">
+              <div class="visual-keys">
+                <kbd class="key-cap space-key">SPACEBAR</kbd>
+                <span class="key-or">or</span>
+                <kbd class="key-cap">H</kbd>
+              </div>
+              <div class="visual-action">Honk Horn! 📢 (Blows away cows & obstacles)</div>
+            </div>
+
+            <hr class="visual-divider">
+
+            <!-- Collectibles grid -->
+            <h3 style="font-size: 16px; margin: 12px 0 6px 0; text-align: center;">Collect Items! 🎒</h3>
+            <div class="visual-items-grid">
+              <div class="visual-item-badge">
+                <span class="badge-icon">🪙</span>
+                <span class="badge-title">Coins</span>
+                <span class="badge-desc">Rupees (₹)</span>
+              </div>
+              <div class="visual-item-badge">
+                <span class="badge-icon">☕</span>
+                <span class="badge-title">Chai</span>
+                <span class="badge-desc">Turbo & Invincibility</span>
+              </div>
+              <div class="visual-item-badge">
+                <span class="badge-icon">🫓</span>
+                <span class="badge-title">Samosa</span>
+                <span class="badge-desc">Heal Health</span>
+              </div>
+              <div class="visual-item-badge">
+                <span class="badge-icon">🙋‍♂️</span>
+                <span class="badge-title">Passenger</span>
+                <span class="badge-desc">Drop at Station</span>
+              </div>
+            </div>
+          </div>
+          
+          <button id="back-to-menu-btn" class="btn primary-btn" style="margin-top: 16px; width: 100%;">Got It! Let's Drive 👍</button>
+        </div>
+      </div>
+
+      <!-- Game Over Screen Overlay -->
+      <div id="game-over-screen" class="overlay hidden">
+        <div class="overlay-card gameover-card glassmorphic">
+          <h2 class="gameover-title">Chakka Jam! (Game Over) 🛑</h2>
+          <p class="gameover-message">Your rickshaw broke down or got stuck in traffic!</p>
+          
+          <div class="stats-summary">
+            <div class="summary-item">
+              <span class="summary-label">Coins Collected</span>
+              <span id="final-score" class="summary-value">₹ 0</span>
+            </div>
+            <div class="summary-item">
+              <span class="summary-label">Total Distance</span>
+              <span id="final-distance" class="summary-value">0 km</span>
+            </div>
+          </div>
+
+          <div class="menu-buttons">
+            <button id="retry-btn" class="btn primary-btn pulse-anim">Drive Again! 🔄</button>
+            <button id="exit-btn" class="btn secondary-btn">Main Menu 🏠</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- On-Screen Mobile Touch Controls -->
+      <div id="touch-controls" class="hidden">
+        <div class="touch-row">
+          <button id="left-pad" class="touch-btn steer-btn">◀</button>
+          <button id="horn-pad" class="touch-btn horn-btn">📯 HORN</button>
+          <button id="right-pad" class="touch-btn steer-btn">▶</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Game Scripts -->
+  <script src="audio.js?v=8"></script>
+  <script src="game.js?v=8"></script>
+</body>
+</html>
