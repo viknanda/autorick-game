@@ -2825,11 +2825,12 @@ document.querySelectorAll('.route-card').forEach(card => {
     let diffY = Math.abs(e.changedTouches[0].clientY - startY);
     // If movement was less than 8px, treat it as a deliberate click/tap
     if (diffX < 8 && diffY < 8) {
+      e.preventDefault(); // Prevent double triggering emulated mouse events
       state.city = card.getAttribute('data-city') || 'mumbai';
       gameAudio.init(); // Play sounds on click context
       startGame();
     }
-  }, { passive: true });
+  }, { passive: false });
   
   card.addEventListener('mousedown', (e) => {
     startX = e.clientX;
