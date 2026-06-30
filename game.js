@@ -2755,7 +2755,8 @@ function startGame() {
   document.getElementById('game-hud').classList.remove('hidden');
 
   // Show touch controls on touch-enabled devices or small screens
-  if (window.innerWidth < 768 || 'ontouchstart' in window) {
+  const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  if (window.innerWidth < 768 || isTouchDevice) {
     document.getElementById('touch-controls').classList.remove('hidden');
   }
 
@@ -2809,15 +2810,45 @@ function quitToMainMenu() {
   document.getElementById('start-screen').classList.remove('hidden');
 }
 
-// Button Bindings
-// Carousel Route Cards click listeners (sets city route and starts game immediately!)
+// Carousel Route Cards click listeners (distinguishes between swipe/scroll and click/tap!)
 document.querySelectorAll('.route-card').forEach(card => {
-  card.addEventListener('click', () => {
-    state.city = card.getAttribute('data-city') || 'mumbai';
-    gameAudio.init(); // Play sounds on click context
-    startGame();
+  let startX = 0;
+  let startY = 0;
+  
+  card.addEventListener('touchstart', (e) => {
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+  
+  card.addEventListener('touchend', (e) => {
+    let diffX = Math.abs(e.changedTouches[0].clientX - startX);
+    let diffY = Math.abs(e.changedTouches[0].clientY - startY);
+    // If movement was less than 8px, treat it as a deliberate click/tap
+    if (diffX < 8 && diffY < 8) {
+      state.city = card.getAttribute('data-city') || 'mumbai';
+      gameAudio.init(); // Play sounds on click context
+      startGame();
+    }
+  }, { passive: true });
+  
+  card.addEventListener('mousedown', (e) => {
+    startX = e.clientX;
+    startY = e.clientY;
+  });
+  
+  card.addEventListener('mouseup', (e) => {
+    let diffX = Math.abs(e.clientX - startX);
+    let diffY = Math.abs(e.clientY - startY);
+    if (diffX < 8 && diffY < 8) {
+      state.city = card.getAttribute('data-city') || 'mumbai';
+      gameAudio.init();
+      startGame();
+    }
   });
 });
+
+// HUD Exit Button
+document.getElementById('hud-exit-btn').addEventListener('click', quitToMainMenu);
 
 document.getElementById('retry-btn').addEventListener('click', startGame);
 
