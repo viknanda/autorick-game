@@ -26,8 +26,11 @@ class GameAudio {
   // Initialize Audio Context on first interaction (required by browsers)
   init() {
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') {
-        this.ctx.resume().catch(e => console.warn("Failed to resume Web Audio context:", e));
+      if (this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
+        const p = this.ctx.resume();
+        if (p && typeof p.catch === 'function') {
+          p.catch(e => console.warn("Failed to resume Web Audio context:", e));
+        }
       }
       return;
     }
@@ -36,8 +39,11 @@ class GameAudio {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContextClass();
       
-      if (this.ctx.state === 'suspended') {
-        this.ctx.resume().catch(e => console.warn("Failed to resume Web Audio context on creation:", e));
+      if (this.ctx.state === 'suspended' && typeof this.ctx.resume === 'function') {
+        const p = this.ctx.resume();
+        if (p && typeof p.catch === 'function') {
+          p.catch(e => console.warn("Failed to resume Web Audio context on creation:", e));
+        }
       }
 
       // Play a short silent buffer to unlock Web Audio on iOS Safari
@@ -232,9 +238,23 @@ class GameAudio {
   startEngine() {
     this.init();
     if (!this.ctx || !this.engineStarted) return;
-    this.ctx.resume().then(() => {
-      this.engineGain.gain.setTargetAtTime(0.45, this.ctx.currentTime, 0.2);
-    });
+    
+    const setVolume = () => {
+      if (this.engineGain && this.ctx) {
+        this.engineGain.gain.setTargetAtTime(0.45, this.ctx.currentTime, 0.2);
+      }
+    };
+
+    if (typeof this.ctx.resume === 'function') {
+      const p = this.ctx.resume();
+      if (p && typeof p.then === 'function') {
+        p.then(setVolume).catch(setVolume);
+      } else {
+        setVolume();
+      }
+    } else {
+      setVolume();
+    }
   }
 
   // ==========================================
