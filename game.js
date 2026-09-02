@@ -3428,11 +3428,17 @@ function startGame() {
   gameAudio.startEngine();
 
   state.screen = 'playing';
+  if (window.portalBridge) {
+    window.portalBridge.gameplayStart();
+  }
 }
 
 function triggerGameOver() {
   state.screen = 'gameover';
   gameAudio.stopEngine();
+  if (window.portalBridge) {
+    window.portalBridge.gameplayStop();
+  }
 
   // Save High Score
   if (state.score > state.highScore) {
@@ -3452,6 +3458,9 @@ function triggerGameOver() {
 function quitToMainMenu() {
   state.screen = 'start';
   gameAudio.stopEngine();
+  if (window.portalBridge) {
+    window.portalBridge.gameplayStop();
+  }
 
   document.getElementById('game-hud').classList.add('hidden');
   document.getElementById('touch-controls').classList.add('hidden');
@@ -3472,7 +3481,57 @@ document.querySelectorAll('.route-card').forEach(card => {
 // HUD Exit Button
 document.getElementById('hud-exit-btn').addEventListener('click', quitToMainMenu);
 
-document.getElementById('retry-btn').addEventListener('click', startGame);
+// Rewarded Video Ad: Revive Rickshaw with 100% Health & Shield!
+const reviveBtn = document.getElementById('revive-btn');
+if (reviveBtn) {
+  reviveBtn.addEventListener('click', () => {
+    if (window.portalBridge) {
+      window.portalBridge.showRewardedAd(
+        // On Rewarded Success:
+        () => {
+          document.getElementById('game-over-screen').classList.add('hidden');
+          document.getElementById('game-hud').classList.remove('hidden');
+          state.screen = 'playing';
+
+          // Restore health to 100%
+          state.health = state.maxHealth;
+          document.getElementById('health-bar').style.width = '100%';
+          const hNum = document.getElementById('health-num');
+          if (hNum) hNum.innerText = '100%';
+
+          // Grant Chai Shield invulnerability grace period
+          state.activeShield = state.activeShieldMax * 1.5;
+          document.getElementById('shield-gauge-container').classList.remove('hidden');
+
+          // Clear obstacles directly on player so they don't immediately re-crash
+          obstacles = obstacles.filter(obs => Math.abs(obs.y - rickshaw.y) > 130);
+
+          // Resume engine audio and driving
+          state.targetSpeed = 2.4;
+          gameAudio.startEngine();
+          window.portalBridge.gameplayStart();
+          showBlessingBanner("⚡ RICKSHAW REVIVED! 🛺 Full Health & Shield!");
+          spawnSparks(rickshaw.x, rickshaw.y, '#00E5FF');
+        },
+        // On Dismiss / Error:
+        () => {
+          console.log('[PortalBridge] Rewarded video closed without reward.');
+        }
+      );
+    }
+  });
+}
+
+// Retry Button with Paced Midgame Commercial Break
+document.getElementById('retry-btn').addEventListener('click', () => {
+  if (window.portalBridge) {
+    window.portalBridge.showMidgameAd(() => {
+      startGame();
+    });
+  } else {
+    startGame();
+  }
+});
 
 document.getElementById('how-to-play-btn').addEventListener('click', () => {
   document.getElementById('start-screen').classList.add('hidden');
@@ -3565,6 +3624,11 @@ canvas.addEventListener('click', () => {
     gameAudio.init();
   }
 });
+
+// Initialize Portal Bridge (CrazyGames / Poki / Standalone fallback)
+if (window.portalBridge && typeof window.portalBridge.init === 'function') {
+  window.portalBridge.init();
+}
 
 // Start Main Animation Loop
 state.lastTime = performance.now();
