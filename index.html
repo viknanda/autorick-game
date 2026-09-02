@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
   <div id="app-container">
@@ -26,48 +26,60 @@
             <span class="label">RUPEES</span>
             <span id="score-val" class="value">₹ 0</span>
           </div>
-          <div class="hud-card meter-card">
-            <span class="label">TOUR DISTANCE</span>
-            <span id="distance-val" class="value">0 km</span>
+          
+          <div class="hud-card health-card">
+            <div class="health-header">
+              <span class="label">HEALTH</span>
+              <span id="health-num" class="health-num">100%</span>
+            </div>
+            <div class="gauge-bar-outer">
+              <div id="health-bar" class="gauge-bar-inner health" style="width: 100%;"></div>
+            </div>
           </div>
+
           <div class="hud-card speed-card">
             <span class="label">SPEED</span>
             <span id="speed-val" class="value">0 km/h</span>
           </div>
         </div>
 
-        <!-- Health and Powerup Gauges -->
-        <div class="hud-gauges">
-          <div class="gauge-container health-gauge">
-            <span class="gauge-label">Rickshaw Health</span>
-            <div class="gauge-bar-outer">
-              <div id="health-bar" class="gauge-bar-inner health" style="width: 100%;"></div>
-            </div>
-          </div>
+        <!-- Floating Notifications Container (Centered, non-overlapping) -->
+        <div class="hud-alerts-container">
+          <!-- Chai Shield Gauge -->
           <div class="gauge-container shield-gauge hidden" id="shield-gauge-container">
             <span class="gauge-label">Chai Shield! ☕</span>
             <div class="gauge-bar-outer">
               <div id="shield-bar" class="gauge-bar-inner shield" style="width: 0%;"></div>
             </div>
           </div>
+
+          <!-- Passenger Status Overlay -->
+          <div id="passenger-status" class="hud-card passenger-card hidden">
+            <span class="passenger-icon">🛺👨‍✈️</span>
+            <span id="passenger-msg" class="passenger-text">Drop passenger at Metro Station!</span>
+          </div>
+
+          <!-- Sacred Cow Blessing Toast Overlay -->
+          <div id="blessing-toast" class="hud-card blessing-card hidden">
+            <span class="blessing-icon">🌸🐮🙏</span>
+            <span id="blessing-msg" class="blessing-text">Gau Mata's Blessing! +Health & ₹50</span>
+          </div>
         </div>
 
-        <!-- HUD Bottom Actions -->
+        <!-- HUD Bottom Actions (Pinned to bottom) -->
         <div class="hud-bottom-actions">
-          <button id="camera-toggle-btn" class="hud-card camera-card">
-            <span class="label">CAMERA</span>
-            <span id="camera-val" class="value">3D CAMERA</span>
-          </button>
-          <button id="hud-exit-btn" class="hud-card exit-card">
+          <button id="hud-exit-btn" class="hud-card action-btn exit-card">
             <span class="label">EXIT</span>
             <span class="value">🏠 MENU</span>
           </button>
-        </div>
-
-        <!-- Passenger Status Overlay -->
-        <div id="passenger-status" class="hud-card passenger-card hidden">
-          <span class="passenger-icon">🛺👨‍✈️</span>
-          <span id="passenger-msg" class="passenger-text">Drop passenger at Metro Station!</span>
+          <div class="hud-card meter-card">
+            <span class="label">DISTANCE</span>
+            <span id="distance-val" class="value">0.0 km</span>
+          </div>
+          <button id="camera-toggle-btn" class="hud-card action-btn camera-card">
+            <span class="label">CAMERA</span>
+            <span id="camera-val" class="value">3D VIEW</span>
+          </button>
         </div>
       </div>
 
@@ -141,7 +153,7 @@
                 <kbd class="key-cap">A</kbd>
                 <kbd class="key-cap">D</kbd>
               </div>
-              <div class="visual-action">Steer Left & Right</div>
+              <div class="visual-action">Steer Left & Right in traffic</div>
             </div>
             
             <!-- Honking controls visual -->
@@ -151,23 +163,23 @@
                 <span class="key-or">or</span>
                 <kbd class="key-cap">H</kbd>
               </div>
-              <div class="visual-action">Honk Horn! 📢 (Blows away cows & obstacles)</div>
+              <div class="visual-action">Honk Horn! 📢 (Alert traffic & clear path)</div>
             </div>
 
             <hr class="visual-divider">
 
             <!-- Collectibles grid -->
-            <h3 style="font-size: 16px; margin: 12px 0 6px 0; text-align: center;">Collect Items! 🎒</h3>
+            <h3 style="font-size: 16px; margin: 12px 0 6px 0; text-align: center;">Pickups & Blessings! 🎒</h3>
             <div class="visual-items-grid">
               <div class="visual-item-badge">
-                <span class="badge-icon">🪙</span>
-                <span class="badge-title">Coins</span>
-                <span class="badge-desc">Rupees (₹)</span>
+                <span class="badge-icon">🐮</span>
+                <span class="badge-title">Gau Mata</span>
+                <span class="badge-desc">Holy Blessing (+HP/₹)</span>
               </div>
               <div class="visual-item-badge">
                 <span class="badge-icon">☕</span>
                 <span class="badge-title">Chai</span>
-                <span class="badge-desc">Turbo & Invincibility</span>
+                <span class="badge-desc">Turbo & Shield</span>
               </div>
               <div class="visual-item-badge">
                 <span class="badge-icon">🫓</span>
@@ -175,9 +187,9 @@
                 <span class="badge-desc">Heal Health</span>
               </div>
               <div class="visual-item-badge">
-                <span class="badge-icon">🙋‍♂️</span>
-                <span class="badge-title">Passenger</span>
-                <span class="badge-desc">Drop at Station</span>
+                <span class="badge-icon">🪙</span>
+                <span class="badge-title">Coins</span>
+                <span class="badge-desc">Rupees (₹)</span>
               </div>
             </div>
           </div>
@@ -222,7 +234,7 @@
     </div>
   </div>
 
-  <script src="audio.js?v=16"></script>
-  <script src="game.js?v=16"></script>
+  <script src="audio.js?v=18"></script>
+  <script src="game.js?v=18"></script>
 </body>
 </html>

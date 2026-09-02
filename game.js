@@ -23,6 +23,7 @@ const HORIZON_Y = 325; // Height of sky/horizon line (lowered to flatten perspec
 const PLAYER_Y = 540;   // Base logical Y of the player vehicle
 const CAMERA_Z = 420;   // Focal length constant (massive zoom-in focal length)
 const ROAD_CENTER_X = GAME_WIDTH / 2; // Road center X
+const WORLD_SPEED_MULT = 2.4; // Multiplier to give high visual speed/action while preserving real km/h
 
 // Game State
 const state = {
@@ -33,9 +34,9 @@ const state = {
   distance: 0, // in meters
   level: 1,
   speed: 0, // current speed in pixels/frame
-  maxSpeed: 8,
+  maxSpeed: 2.6, // Realistic base cruising speed (trebled down)
   targetSpeed: 0,
-  baseRoadSpeed: 2,
+  baseRoadSpeed: 0.8,
   health: 100,
   maxHealth: 100,
   activeShield: 0, // remaining shield frames
@@ -147,26 +148,33 @@ class Particle {
     this.vy = vy;
     this.life = life; // Starting transparency/frames remaining
     this.maxLife = life;
-    this.type = type; // 'exhaust', 'spark', 'coin'
+    this.type = type; // 'exhaust', 'spark', 'coin', 'petal', 'sparkle'
+    this.rotation = Math.random() * Math.PI * 2;
+    this.rotSpeed = (Math.random() - 0.5) * 0.15;
   }
 
   update() {
     this.x += this.vx;
     this.y += this.vy;
+    this.rotation += this.rotSpeed;
     this.life--;
     if (this.type === 'exhaust') {
       this.size += 0.2; // Smoke expands
+    } else if (this.type === 'petal') {
+      this.vx += Math.sin(Date.now() * 0.01 + this.rotation) * 0.05; // Gentle fluttering drift
+      this.vy += 0.01; // Soft drift
     }
   }
 
   draw(c) {
     c.save();
-    c.globalAlpha = this.life / this.maxLife;
+    c.globalAlpha = Math.max(0, this.life / this.maxLife);
     
     // Project particle coordinates into 3D space
     let proj = project(this.x, this.y);
     c.translate(proj.x, proj.y);
     c.scale(proj.scale, proj.scale);
+    c.rotate(this.rotation);
     
     c.fillStyle = this.color;
     c.beginPath();
@@ -183,6 +191,23 @@ class Particle {
       c.strokeStyle = '#F57F17';
       c.lineWidth = 1;
       c.stroke();
+    } else if (this.type === 'petal') {
+      // Oval flower petal (Marigold / Rose)
+      c.ellipse(0, 0, this.size, this.size * 0.6, 0, 0, Math.PI * 2);
+      c.fill();
+    } else if (this.type === 'sparkle') {
+      // 4-pointed golden sparkle star
+      c.fillStyle = '#FFF176';
+      c.moveTo(0, -this.size * 1.5);
+      c.lineTo(this.size * 0.4, -this.size * 0.4);
+      c.lineTo(this.size * 1.5, 0);
+      c.lineTo(this.size * 0.4, this.size * 0.4);
+      c.lineTo(0, this.size * 1.5);
+      c.lineTo(-this.size * 0.4, this.size * 0.4);
+      c.lineTo(-this.size * 1.5, 0);
+      c.lineTo(-this.size * 0.4, -this.size * 0.4);
+      c.closePath();
+      c.fill();
     }
     c.restore();
   }
@@ -211,22 +236,36 @@ class Rickshaw {
     }
 
     // Smooth movement logic
-    const steeringSpeed = 4.5;
+    const steeringSpeed = 5.0;
     if (steerDir !== 0) {
       this.targetX += steerDir * steeringSpeed;
       // Tilt rickshaw based on direction
-      this.angle = steerDir * 0.08;
+      this.angle = steerDir * 0.09;
     } else {
       // Return to straight angle
-      this.angle *= 0.8;
+      this.angle *= 0.75;
     }
 
     // Keep rickshaw bound inside road borders
-    const margin = this.width / 2 + 10;
+    const margin = this.width / 2 + 8;
     this.targetX = Math.max(ROAD.leftBorder + margin, Math.min(ROAD.rightBorder - margin, this.targetX));
     
     // Smooth transition to target position
-    this.x += (this.targetX - this.x) * 0.25;
+    this.x += (this.targetX - this.x) * 0.3;
+
+    // Off-road / Municipal Kerb Vibration & Friction Wear-and-Tear
+    if (state.speed > 1 && (this.x <= ROAD.leftBorder + margin + 8 || this.x >= ROAD.rightBorder - margin - 8)) {
+      state.health = Math.max(0, state.health - 0.05);
+      document.getElementById('health-bar').style.width = state.health + '%';
+      const hNum = document.getElementById('health-num');
+      if (hNum) hNum.innerText = Math.max(0, Math.round(state.health)) + '%';
+      if (Math.random() < 0.25) {
+        spawnSparks(this.x + (this.x < ROAD_CENTER_X ? -12 : 12), this.y + 12, '#FFD54F');
+      }
+      if (state.health <= 0) {
+        triggerGameOver();
+      }
+    }
 
     // 2. Exhaust Particles (Only when driving)
     if (state.speed > 1) {
@@ -403,58 +442,160 @@ class Rickshaw {
 
 // 3. Traffic Vehicle & Cow Obstacles Class
 class Obstacle {
-  constructor(lane, type) {
+  constructor(lane, type, initialY = -120) {
     this.lane = lane;
-    this.type = type; // 'cow', 'truck', 'taxi', 'pothole', 'bicycle', 'dog'
+    this.type = type; // 'cow', 'truck', 'taxi', 'car', 'bus', 'scooter', 'pothole', 'bicycle', 'dog'
     this.x = ROAD.lanes[lane];
-    this.y = -100; // Start offscreen
+    this.y = initialY; // Start at specified Y position or default offscreen
 
-    // Set properties based on type
+    // Assorted civilian colors for passenger cars
+    const carColors = ['#FAFAFA', '#C62828', '#B0BEC5', '#1976D2', '#37474F'];
+    // Assorted bus colors (BEST Red, DTC Blue, BMTC Green)
+    const busColors = ['#C62828', '#1565C0', '#2E7D32'];
+    // Assorted helmet colors
+    const helmetColors = ['#D32F2F', '#1976D2', '#FBC02D', '#37474F', '#FFFFFF'];
+
+    // Set properties based on type (Speeds scaled to realistic city pace & city nuances)
     switch (type) {
       case 'cow':
         this.width = 55;
         this.height = 50;
-        this.speed = 0; // Cows do not move!
-        this.damage = 15;
+        this.speed = 0; // Sacred cows are peaceful and stationary
+        this.damage = 0; // Blessing instead of damage!
         break;
-      case 'truck':
-        this.width = 48;
-        this.height = 95;
-        this.speed = 1.8 + Math.random() * 1.5; // Slow-moving heavy trucks
-        this.damage = 30;
-        this.color = ['#D32F2F', '#1976D2', '#F57C00'][Math.floor(Math.random() * 3)];
+      case 'car':
+        this.width = 44;
+        this.height = 68;
+        this.speed = 1.3 + Math.random() * 0.5; // Modern passenger cars cruising
+        this.damage = 28; // Increased collision damage
+        this.color = carColors[Math.floor(Math.random() * carColors.length)];
+        this.swayed = false;
         break;
       case 'taxi':
-        this.width = 42;
+        this.width = 44;
         this.height = 68;
-        this.speed = 3.0 + Math.random() * 2.5; // Faster taxis
-        this.damage = 20;
+        this.speed = 1.2 + Math.random() * 0.5;
+        this.damage = 26; // Increased collision damage
+        this.swayed = false;
+        // City-specific taxi models & liveries:
+        // - Mumbai: Iconic Black & Yellow (Kaali-Peeli)
+        // - Kolkata: Iconic Yellow Ambassador
+        // - Delhi: White/Silver CNG Sedan Cab with green eco-stripe
+        // - Bangalore / Chennai: White/Silver City Cab
+        if (state.city === 'mumbai') {
+          this.taxiType = 'MUMBAI_KAALI_PEELI';
+          this.plate = 'MH 01 BK 9024';
+        } else if (state.city === 'kolkata') {
+          this.taxiType = 'KOLKATA_YELLOW_AMBASSADOR';
+          this.plate = 'WB 02 E 5519';
+        } else if (state.city === 'delhi') {
+          this.taxiType = 'DELHI_CNG_CAB';
+          this.plate = 'DL 1Y A 3820';
+        } else if (state.city === 'bangalore') {
+          this.taxiType = 'BANGALORE_CITY_CAB';
+          this.plate = 'KA 01 F 7721';
+        } else { // chennai
+          this.taxiType = 'CHENNAI_CITY_CAB';
+          this.plate = 'TN 01 AK 6642';
+        }
+        break;
+      case 'bus':
+        this.width = 56;
+        this.height = 100;
+        this.speed = 0.9 + Math.random() * 0.3; // Heavy state transport city bus
+        this.damage = 42; // Heavy collision damage!
+        // City-specific buses:
+        // - Mumbai: BEST Red Bus
+        // - Delhi: DTC Blue AC / DTC Green CNG Bus
+        // - Bangalore: BMTC Teal/Blue Bus
+        // - Kolkata: WBTC Royal Blue/White Bus
+        // - Chennai: MTC Crimson Bus
+        if (state.city === 'mumbai') {
+          this.busType = 'BEST';
+          this.color = '#C62828'; // BEST Crimson Red
+          this.roofColor = '#FFF9C4'; // Cream roof stripe
+          this.routeText = 'BEST 302: DADAR / CST';
+          this.plate = 'MH 01 BR 3320';
+        } else if (state.city === 'delhi') {
+          this.busType = 'DTC';
+          this.color = Math.random() < 0.6 ? '#1565C0' : '#1B5E20'; // DTC Royal Blue AC or DTC Green CNG
+          this.roofColor = '#EEEEEE';
+          this.routeText = 'DTC 534: CONNAUGHT PL';
+          this.plate = 'DL 1P C 8840';
+        } else if (state.city === 'bangalore') {
+          this.busType = 'BMTC';
+          this.color = '#0288D1'; // BMTC Cyan/Blue
+          this.roofColor = '#FFFFFF';
+          this.routeText = 'BMTC 335E: MAJESTIC';
+          this.plate = 'KA 57 F 1204';
+        } else if (state.city === 'kolkata') {
+          this.busType = 'WBTC';
+          this.color = '#1976D2'; // WBTC Royal Blue
+          this.roofColor = '#FFFFFF';
+          this.routeText = 'WBTC 24A: HOWRAH';
+          this.plate = 'WB 04 G 4490';
+        } else { // chennai
+          this.busType = 'MTC';
+          this.color = '#D32F2F'; // MTC Crimson
+          this.roofColor = '#FFE082';
+          this.routeText = 'MTC 29C: BROADWAY';
+          this.plate = 'TN 07 N 9120';
+        }
+        break;
+      case 'scooter':
+        this.width = 30;
+        this.height = 48;
+        this.speed = 1.1 + Math.random() * 0.5; // Nimble commuter two-wheeler
+        this.damage = 16;
+        this.helmetColor = helmetColors[Math.floor(Math.random() * helmetColors.length)];
+        this.color = ['#29B6F6', '#EF5350', '#BDBDBD', '#FFA726'][Math.floor(Math.random() * 4)];
+        this.swayed = false;
+        break;
+      case 'truck':
+        this.width = 50;
+        this.height = 96;
+        this.speed = 0.8 + Math.random() * 0.4; // Slow-moving heavy cargo truck
+        this.damage = 36;
+        this.color = ['#D32F2F', '#1976D2', '#F57C00'][Math.floor(Math.random() * 3)];
         break;
       case 'pothole':
-        this.width = 38;
-        this.height = 25;
-        this.speed = 0; // Ground surface pothole
-        this.damage = 8;
+        this.width = 36;
+        this.height = 24;
+        this.speed = 0; // Ground surface crater
+        this.damage = 14;
         break;
       case 'bicycle':
         this.width = 28;
-        this.height = 60;
-        this.speed = 1.2 + Math.random() * 0.8; // Very slow local bicycle delivery
-        this.damage = 10;
+        this.height = 54;
+        this.speed = 0.4 + Math.random() * 0.3; // Local milkman bicycle delivery
+        this.damage = 12;
         break;
       case 'dog':
-        this.width = 32;
-        this.height = 44;
-        this.speed = 0.4 + Math.random() * 0.4; // Very slow stray dog walking on lane
-        this.damage = 8;
+        this.width = 30;
+        this.height = 42;
+        this.speed = 0.2 + Math.random() * 0.2; // Stray dog ambling along
+        this.damage = 10;
         break;
     }
   }
 
   update() {
-    // Move obstacle relative to road speed (which is controlled by player speed)
-    // If obstacle speed is > 0, it also moves forward on the road
-    this.y += state.speed - this.speed;
+    // Move obstacle relative to road speed
+    // Scaled by WORLD_SPEED_MULT for brisk, exciting visual motion
+    this.y += (state.speed * WORLD_SPEED_MULT) - (this.speed * 1.0);
+
+    // Dynamic lane change behavior (fast cars & scooters weave ahead)
+    if (!this.swayed && (this.type === 'car' || this.type === 'taxi' || this.type === 'scooter')) {
+      if (this.y > 100 && this.y < 360 && Math.random() < 0.006) {
+        this.swayed = true;
+        const shift = (Math.random() < 0.5 ? -1 : 1);
+        const nextLane = Math.max(0, Math.min(2, this.lane + shift));
+        if (nextLane !== this.lane) {
+          this.lane = nextLane;
+          this.x = ROAD.lanes[nextLane];
+        }
+      }
+    }
   }
 
   draw(c) {
@@ -465,15 +606,16 @@ class Obstacle {
     c.translate(proj.x, proj.y);
     c.scale(proj.scale, proj.scale);
 
-    // Apply high-fidelity drop shadows (Better Rendering)
-    c.shadowColor = 'rgba(0, 0, 0, 0.35)';
-    c.shadowBlur = 8;
-    c.shadowOffsetY = 6;
+    // Ground Contact Ambient Occlusion Shadow (Firmly plants wheels/hooves on tarmac)
+    c.fillStyle = 'rgba(0, 0, 0, 0.42)';
+    c.beginPath();
+    c.ellipse(0, this.height * 0.28, this.width * 0.52, 6, 0, 0, Math.PI * 2);
+    c.fill();
 
     if (this.type === 'cow') {
-      // --- DRAW COW (Rear-Quarter 3D standing profile) ---
+      // --- DRAW SACRED COW (Rear-Quarter 3D standing profile with Divine Radiance) ---
       // Four standing legs extending down to meet the road
-      c.fillStyle = '#C7B198'; // Leg color (dirty beige/brown)
+      c.fillStyle = '#C7B198'; // Leg color
       c.fillRect(-12, 10, 5, 20); // Rear Left
       c.fillRect(7, 10, 5, 20);   // Rear Right
       c.fillRect(-18, 2, 5, 18);  // Front Left
@@ -495,11 +637,6 @@ class Obstacle {
       c.beginPath();
       c.ellipse(-7, -4, 15, 13, 0, 0, Math.PI * 2);
       c.fill();
-
-      // Disable shadow for details
-      c.shadowColor = 'transparent';
-      c.shadowBlur = 0;
-      c.shadowOffsetY = 0;
 
       // Spots (black patches draped across rear and back)
       c.fillStyle = '#3E2723';
@@ -553,7 +690,7 @@ class Obstacle {
       c.ellipse(-10, -11, 3, 6, Math.PI / 3, 0, Math.PI * 2);
       c.fill();
 
-      // 4. Tail (hanging down from the rump and swaying slightly)
+      // 4. Tail (swaying slightly)
       c.strokeStyle = '#EFEBE9';
       c.lineWidth = 2.5;
       c.beginPath();
@@ -566,279 +703,645 @@ class Obstacle {
       c.ellipse(11, 26, 2.5, 4, 0, 0, Math.PI * 2);
       c.fill();
 
-    } else if (this.type === 'truck') {
-      // --- DRAW TRUCK ("HORN OK PLEASE") ---
-      c.fillStyle = '#222';
-      c.fillRect(-25, -34, 4, 15); // Tires
-      c.fillRect(21, -34, 4, 15);
-      c.fillRect(-25, 20, 5, 18);
-      c.fillRect(20, 20, 5, 18);
+      // Divine Golden Radiance Ring (Auspicious Gau Mata Halo)
+      const haloAlpha = 0.35 + Math.sin(Date.now() * 0.005) * 0.15;
+      c.strokeStyle = `rgba(255, 215, 0, ${haloAlpha})`;
+      c.lineWidth = 2.5;
+      c.beginPath();
+      c.arc(0, 0, 32, 0, Math.PI * 2);
+      c.stroke();
 
-      // Cabin (Vibrant Saffron/Red/Blue)
+    } else if (this.type === 'taxi') {
+      // --- DRAW 3D REAR-PERSPECTIVE TAXI (CITY-SPECIFIC LIVERY) ---
+      // Rear Tires
+      c.fillStyle = '#1A1A1A';
+      c.fillRect(-21, 14, 6, 15);
+      c.fillRect(15, 14, 6, 15);
+
+      if (this.taxiType === 'KOLKATA_YELLOW_AMBASSADOR') {
+        // --- ICONIC KOLKATA AMBASSADOR YELLOW CAB ---
+        // Curvy Classic Ambassador Yellow Chassis
+        c.fillStyle = '#FBC02D'; // Classic Canary Yellow
+        c.beginPath();
+        c.roundRect(-23, -4, 46, 26, [8, 8, 8, 8]);
+        c.fill();
+
+        // Rounded Boot Lid / Rear Wings
+        c.fillStyle = '#F57F17'; // Shaded yellow contour
+        c.beginPath();
+        c.roundRect(-21, -15, 42, 16, [6, 6, 2, 2]);
+        c.fill();
+        c.fillStyle = '#FBC02D';
+        c.beginPath();
+        c.roundRect(-19, -13, 38, 13, [4, 4, 0, 0]);
+        c.fill();
+
+        // Classic Curved Slanted Rear Windshield
+        c.fillStyle = '#263238';
+        c.beginPath();
+        c.moveTo(-18, -14);
+        c.lineTo(18, -14);
+        c.lineTo(15, -28);
+        c.lineTo(-15, -28);
+        c.closePath();
+        c.fill();
+
+        // Glass reflection streak
+        c.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        c.beginPath();
+        c.moveTo(-8, -14); c.lineTo(-3, -14); c.lineTo(3, -28); c.lineTo(-2, -28);
+        c.closePath();
+        c.fill();
+
+        // Ambassador Yellow Roof
+        c.fillStyle = '#FBC02D';
+        c.beginPath();
+        c.roundRect(-16, -34, 32, 8, [5, 5, 2, 2]);
+        c.fill();
+
+        // Chrome Roof Luggage Carrier Rack with Luggage
+        c.strokeStyle = '#ECEFF1';
+        c.lineWidth = 1.5;
+        c.strokeRect(-13, -39, 26, 6);
+        c.fillStyle = '#6D4C41'; // Leather trunk on rack
+        c.fillRect(-9, -43, 18, 5);
+        c.strokeStyle = '#3E2723';
+        c.lineWidth = 0.8;
+        c.strokeRect(-9, -43, 18, 5);
+
+        // Kolkata Taxi Blue-and-White Checker Beltline Stripe
+        c.fillStyle = '#1565C0';
+        c.fillRect(-22, 1, 44, 4);
+        c.fillStyle = '#FFFFFF';
+        for (let chk = -20; chk <= 18; chk += 6) {
+          c.fillRect(chk, 1, 3, 4);
+        }
+
+        // Blue Stencilled "TAXI" Text
+        c.fillStyle = '#0D47A1';
+        c.font = 'bold 5px sans-serif';
+        c.textAlign = 'center';
+        c.fillText('TAXI', 0, 11);
+
+        // Classic Ambassador Chrome Rear Bumper with Overriders
+        c.fillStyle = '#CFD8DC';
+        c.fillRect(-23, 17, 46, 4.5);
+        c.fillStyle = '#ECEFF1';
+        c.fillRect(-23, 17, 46, 1.5);
+        // Chrome Overriders (vertical bumper guards)
+        c.fillStyle = '#FFFFFF';
+        c.fillRect(-14, 15, 3, 8);
+        c.fillRect(11, 15, 3, 8);
+
+        // Vintage Round Dual Red Taillights
+        c.fillStyle = '#D50000';
+        c.beginPath(); c.arc(-19, 7, 3.5, 0, Math.PI * 2); c.fill();
+        c.beginPath(); c.arc(19, 7, 3.5, 0, Math.PI * 2); c.fill();
+        c.fillStyle = '#FF9100';
+        c.beginPath(); c.arc(-19, 7, 1.5, 0, Math.PI * 2); c.fill();
+        c.beginPath(); c.arc(19, 7, 1.5, 0, Math.PI * 2); c.fill();
+
+        // Kolkata Commercial Number Plate (WB 02)
+        c.fillStyle = '#FFEB3B';
+        c.fillRect(-10, 8, 20, 5.5);
+        c.strokeStyle = '#000';
+        c.lineWidth = 0.5;
+        c.strokeRect(-10, 8, 20, 5.5);
+        c.fillStyle = '#000';
+        c.font = 'bold 3.2px sans-serif';
+        c.textAlign = 'center';
+        c.fillText(this.plate || 'WB 02 E 5519', 0, 12);
+
+      } else if (this.taxiType === 'MUMBAI_KAALI_PEELI') {
+        // --- CLASSIC MUMBAI KAALI-PEELI TAXI ---
+        // Lower Black Chassis / Bumper Base
+        c.fillStyle = '#111111';
+        c.beginPath();
+        c.roundRect(-22, -2, 44, 26, [0, 0, 6, 6]);
+        c.fill();
+
+        // Rear Trunk / Boot Lid (Black metal with slight sheen)
+        c.fillStyle = '#212121';
+        c.beginPath();
+        c.roundRect(-20, -14, 40, 16, [4, 4, 0, 0]);
+        c.fill();
+
+        // Slanted Rear Windshield
+        c.fillStyle = '#263238';
+        c.beginPath();
+        c.moveTo(-18, -14); c.lineTo(18, -14); c.lineTo(15, -28); c.lineTo(-15, -28);
+        c.closePath();
+        c.fill();
+
+        // Glass highlight
+        c.fillStyle = 'rgba(255, 255, 255, 0.35)';
+        c.beginPath();
+        c.moveTo(-10, -14); c.lineTo(-4, -14); c.lineTo(2, -28); c.lineTo(-4, -28);
+        c.closePath();
+        c.fill();
+
+        // Vibrant Yellow Roof & Upper Pillars (Classic Kaali-Peeli)
+        c.fillStyle = '#FFD600';
+        c.beginPath();
+        c.roundRect(-16, -35, 32, 9, [4, 4, 2, 2]);
+        c.fill();
+        c.fillRect(-17, -28, 3, 14);
+        c.fillRect(14, -28, 3, 14);
+
+        // 3D Illuminated Roof TAXI Sign Box
+        c.fillStyle = '#FFA000';
+        c.fillRect(-9, -42, 18, 8);
+        c.fillStyle = '#FFF9C4';
+        c.fillRect(-8, -41, 16, 6);
+        c.fillStyle = '#000000';
+        c.font = 'bold 4.5px sans-serif';
+        c.textAlign = 'center';
+        c.fillText('TAXI', 0, -36.5);
+
+        // Chrome Rear Bumper Bar
+        c.fillStyle = '#CFD8DC';
+        c.fillRect(-22, 18, 44, 4);
+        c.fillStyle = '#ECEFF1';
+        c.fillRect(-22, 18, 44, 1.5);
+
+        // Glowing Dual Red Taillights
+        c.fillStyle = '#FF1744'; c.fillRect(-20, 4, 7, 7);
+        c.fillStyle = '#FF9100'; c.fillRect(-20, 11, 7, 3);
+        c.fillStyle = '#FF1744'; c.fillRect(13, 4, 7, 7);
+        c.fillStyle = '#FF9100'; c.fillRect(13, 11, 7, 3);
+
+        // Yellow Commercial Number Plate
+        c.fillStyle = '#FFEB3B';
+        c.fillRect(-10, 8, 20, 6);
+        c.strokeStyle = '#000';
+        c.lineWidth = 0.5;
+        c.strokeRect(-10, 8, 20, 6);
+        c.fillStyle = '#000';
+        c.font = 'bold 3.5px sans-serif';
+        c.textAlign = 'center';
+        c.fillText(this.plate || 'MH 01 BK 9024', 0, 12.5);
+
+      } else {
+        // --- MODERN CITY SEDAN CAB (DELHI / BANGALORE / CHENNAI) ---
+        c.fillStyle = '#FAFAFA'; // White/Silver Base
+        c.beginPath();
+        c.roundRect(-22, -4, 44, 26, [4, 4, 6, 6]);
+        c.fill();
+        c.beginPath();
+        c.roundRect(-20, -15, 40, 15, [4, 4, 0, 0]);
+        c.fill();
+
+        // Delhi Green CNG Stripe
+        if (this.taxiType === 'DELHI_CNG_CAB') {
+          c.fillStyle = '#2E7D32';
+          c.fillRect(-22, 2, 44, 3.5);
+          c.fillStyle = '#FFD600';
+          c.fillRect(-22, 5.5, 44, 1.5);
+        }
+
+        // Slanted Rear Windshield
+        c.fillStyle = '#212121';
+        c.beginPath();
+        c.moveTo(-18, -15); c.lineTo(18, -15); c.lineTo(15, -30); c.lineTo(-15, -30);
+        c.closePath();
+        c.fill();
+
+        // Roof Taxi Sign
+        c.fillStyle = '#FAFAFA';
+        c.beginPath(); c.roundRect(-16, -34, 32, 6, [3, 3, 0, 0]); c.fill();
+        c.fillStyle = '#FFC107';
+        c.fillRect(-8, -40, 16, 7);
+        c.fillStyle = '#000';
+        c.font = 'bold 4px sans-serif';
+        c.textAlign = 'center';
+        c.fillText('TAXI', 0, -35);
+
+        // Modern Taillights
+        c.fillStyle = '#D50000'; c.fillRect(-21, 0, 8, 7);
+        c.fillStyle = '#FF9100'; c.fillRect(-21, 7, 8, 2.5);
+        c.fillStyle = '#D50000'; c.fillRect(13, 0, 8, 7);
+        c.fillStyle = '#FF9100'; c.fillRect(13, 7, 8, 2.5);
+
+        // Commercial Plate
+        c.fillStyle = '#FFEB3B';
+        c.fillRect(-10, 9, 20, 5.5);
+        c.strokeStyle = '#000';
+        c.lineWidth = 0.5;
+        c.strokeRect(-10, 9, 20, 5.5);
+        c.fillStyle = '#000';
+        c.font = 'bold 3.2px sans-serif';
+        c.textAlign = 'center';
+        c.fillText(this.plate || 'DL 1Y A 3820', 0, 13);
+      }
+
+      // Black rubber mudflaps
+      c.fillStyle = '#111';
+      c.fillRect(-21, 24, 6, 5);
+      c.fillRect(15, 24, 6, 5);
+
+    } else if (this.type === 'car') {
+      // --- DRAW 3D REAR-PERSPECTIVE PASSENGER CAR (Hatchback/Sedan) ---
+      // Rear Tires
+      c.fillStyle = '#1A1A1A';
+      c.fillRect(-21, 12, 6, 16);
+      c.fillRect(15, 12, 6, 16);
+
+      // Main Lower Rear Body (Assorted Colors: White, Red, Silver, Blue, Grey)
       c.fillStyle = this.color;
       c.beginPath();
-      c.roundRect(-22, -45, 44, 30, [4, 4, 0, 0]);
+      c.roundRect(-22, -4, 44, 26, [4, 4, 6, 6]);
       c.fill();
 
-      // Windshield
-      c.fillStyle = '#37474F';
-      c.fillRect(-18, -41, 36, 6);
+      // Tailgate / Boot upper section
+      c.beginPath();
+      c.roundRect(-20, -15, 40, 15, [4, 4, 0, 0]);
+      c.fill();
 
-      // Cargo Bed (Red Painted wood frame + Yellow inner panel for text contrast)
-      c.fillStyle = '#D32F2F'; // Traditional red wood frame
-      c.fillRect(-23, -15, 46, 60);
-      c.fillStyle = '#FFEB3B'; // Bright yellow inner panel
-      c.fillRect(-20, -12, 40, 54);
+      // Slanted Rear Windshield
+      c.fillStyle = '#212121';
+      c.beginPath();
+      c.moveTo(-18, -15);
+      c.lineTo(18, -15);
+      c.lineTo(15, -30);
+      c.lineTo(-15, -30);
+      c.closePath();
+      c.fill();
 
-      // Disable shadow for fine details
-      c.shadowColor = 'transparent';
-      c.shadowBlur = 0;
-      c.shadowOffsetY = 0;
+      // Glass highlight
+      c.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      c.beginPath();
+      c.moveTo(-8, -15);
+      c.lineTo(-3, -15);
+      c.lineTo(3, -30);
+      c.lineTo(-2, -30);
+      c.closePath();
+      c.fill();
 
-
-      // "HORN OK PLEASE" painted directly in large bold black letters on the truck's rear wood panel (cargo back wall)
-      c.fillStyle = '#000000'; // Solid black paint
-      c.font = 'bold 8.5px var(--font-family)';
-      c.textAlign = 'center';
-      c.fillText('HORN', 0, 1);
-      c.fillText('OK', 0, 13);
-      c.fillText('PLEASE', 0, 25);
-      
-      // Bottom warning banner on the rear bumper (yellow/black diagonal hazard stripes)
-      c.fillStyle = '#FFFF00';
-      c.fillRect(-22, 43, 44, 10);
-      c.strokeStyle = '#222';
+      // Rear glass wiper
+      c.strokeStyle = '#000';
       c.lineWidth = 1;
-      c.strokeRect(-22, 43, 44, 10);
-      c.strokeStyle = '#000000';
-      c.lineWidth = 2.5;
-      for (let sx = -18; sx <= 22; sx += 8) {
+      c.beginPath();
+      c.moveTo(0, -16);
+      c.lineTo(8, -22);
+      c.stroke();
+
+      // Roof & Roof Spoiler
+      c.fillStyle = this.color;
+      c.beginPath();
+      c.roundRect(-16, -34, 32, 6, [3, 3, 0, 0]);
+      c.fill();
+
+      // 3rd Brake Light (High mount)
+      c.fillStyle = '#D50000';
+      c.fillRect(-4, -32, 8, 1.8);
+
+      // Modern Sculpted Wrap-Around Taillights
+      // Left Lamp
+      c.fillStyle = '#D50000';
+      c.beginPath();
+      c.roundRect(-21, 0, 8, 7, [2, 0, 0, 2]);
+      c.fill();
+      c.fillStyle = '#FF9100';
+      c.fillRect(-21, 7, 8, 2.5);
+      // Right Lamp
+      c.fillStyle = '#D50000';
+      c.beginPath();
+      c.roundRect(13, 0, 8, 7, [0, 2, 2, 0]);
+      c.fill();
+      c.fillStyle = '#FF9100';
+      c.fillRect(13, 7, 8, 2.5);
+
+      // Chrome Brand Emblem
+      c.fillStyle = '#ECEFF1';
+      c.beginPath();
+      c.arc(0, 3, 2.5, 0, Math.PI * 2);
+      c.fill();
+
+      // White Private Registration Plate
+      c.fillStyle = '#FFFFFF';
+      c.fillRect(-10, 9, 20, 5.5);
+      c.strokeStyle = '#000';
+      c.lineWidth = 0.5;
+      c.strokeRect(-10, 9, 20, 5.5);
+      c.fillStyle = '#000';
+      c.font = 'bold 3.5px sans-serif';
+      c.textAlign = 'center';
+      c.fillText('MH 02 CZ 4410', 0, 13);
+
+      // Lower bumper diffuser
+      c.fillStyle = '#212121';
+      c.fillRect(-18, 18, 36, 4);
+
+    } else if (this.type === 'bus') {
+      // --- DRAW 3D REAR-PERSPECTIVE CITY BUS (BEST / DTC / BMTC / WBTC / MTC) ---
+      // Heavy Rear Dual Tires
+      c.fillStyle = '#1A1A1A';
+      c.fillRect(-26, 26, 7, 18);
+      c.fillRect(19, 26, 7, 18);
+
+      // Tall Boxy Body Structure (BEST Red / DTC Blue / BMTC Cyan / WBTC Blue)
+      c.fillStyle = this.color || '#C62828';
+      c.beginPath();
+      c.roundRect(-27, -48, 54, 80, [6, 6, 2, 2]);
+      c.fill();
+
+      // Roof Cap (White / Cream)
+      c.fillStyle = this.roofColor || '#EEEEEE';
+      c.beginPath();
+      c.roundRect(-26, -52, 52, 7, [4, 4, 0, 0]);
+      c.fill();
+
+      // Top Illuminated Route & Destination LED Matrix Board
+      c.fillStyle = '#111111';
+      c.fillRect(-24, -45, 48, 10);
+      c.fillStyle = '#FFD54F'; // Amber LED text
+      c.font = 'bold 4.2px monospace';
+      c.textAlign = 'center';
+      c.fillText(this.routeText || 'ROUTE 302: DADAR', 0, -38);
+
+      // Large Rear Passenger Window
+      c.fillStyle = '#263238';
+      c.fillRect(-23, -32, 46, 20);
+      c.strokeStyle = '#37474F';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(0, -32); c.lineTo(0, -12);
+      c.stroke();
+
+      // Passenger silhouettes inside bus
+      c.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      c.beginPath();
+      c.arc(-14, -20, 4, 0, Math.PI * 2);
+      c.arc(-5, -20, 4, 0, Math.PI * 2);
+      c.arc(7, -20, 4, 0, Math.PI * 2);
+      c.arc(16, -20, 4, 0, Math.PI * 2);
+      c.fill();
+
+      // Safety text / Emergency exit
+      c.fillStyle = '#D50000';
+      c.font = 'bold 4px sans-serif';
+      c.textAlign = 'center';
+      c.fillText('EMERGENCY EXIT', 0, -7);
+
+      // Engine cooling louvers/vents
+      c.fillStyle = '#212121';
+      c.fillRect(-20, 0, 40, 10);
+      c.strokeStyle = '#424242';
+      c.lineWidth = 1;
+      for (let ly = 2; ly <= 8; ly += 2.5) {
         c.beginPath();
-        c.moveTo(sx - 3, 43);
-        c.lineTo(sx + 3, 53);
+        c.moveTo(-18, ly); c.lineTo(18, ly);
         c.stroke();
       }
 
-      // Yellow license plate (Detail)
-      c.fillStyle = '#FFEB3B';
-      c.fillRect(-10, 36, 20, 5);
-      c.strokeStyle = '#000';
-      c.lineWidth = 0.5;
-      c.strokeRect(-10, 36, 20, 5);
-      c.fillStyle = '#000';
-      c.font = 'bold 3.5px sans-serif';
-      c.fillText('MH 02 BG 4821', 0, 40);
+      // Triple Stacked Rear Taillights (Red / Amber / White)
+      c.fillStyle = '#D50000'; c.fillRect(-25, 4, 4, 4);
+      c.fillStyle = '#FF9100'; c.fillRect(-25, 9, 4, 3);
+      c.fillStyle = '#EEEEEE'; c.fillRect(-25, 13, 4, 3);
+      c.fillStyle = '#D50000'; c.fillRect(21, 4, 4, 4);
+      c.fillStyle = '#FF9100'; c.fillRect(21, 9, 4, 3);
+      c.fillStyle = '#EEEEEE'; c.fillRect(21, 13, 4, 3);
 
-    } else if (this.type === 'taxi') {
-      // --- DRAW PREMIER PADMINI TAXI ---
-      c.fillStyle = '#222';
-      c.fillRect(-21, -22, 3, 12);
-      c.fillRect(18, -22, 3, 12);
-      c.fillRect(-21, 12, 3, 12);
-      c.fillRect(18, 12, 3, 12);
-
-      // Black Hood & Trunk, Yellow Cabin Roof (Typical Mumbai/Kolkata Taxi)
-      c.fillStyle = '#111111'; // Black body
-      c.beginPath();
-      c.roundRect(-19, -26, 38, 52, 6);
-      c.fill();
-
-      // Disable shadow for fine details
-      c.shadowColor = 'transparent';
-      c.shadowBlur = 0;
-      c.shadowOffsetY = 0;
-
-      c.fillStyle = '#FFCC00'; // Yellow roof
-      c.beginPath();
-      c.roundRect(-16, -14, 32, 28, 4);
-      c.fill();
-
-      // Windows
-      c.fillStyle = '#37474F';
-      c.fillRect(-13, -11, 26, 5); // Front wind
-      c.fillRect(-13, 5, 26, 5);   // Rear wind
-      c.fillRect(-14, -4, 2, 8);   // Left side
-      c.fillRect(12, -4, 2, 8);    // Right side
-
-      // Yellow license plate (Detail)
-      c.fillStyle = '#FFEB3B';
-      c.fillRect(-9, 18, 18, 5);
-      c.strokeStyle = '#000';
-      c.lineWidth = 0.5;
-      c.strokeRect(-9, 18, 18, 5);
-      c.fillStyle = '#000';
-      c.font = 'bold 3.5px sans-serif';
-      c.fillText('MH 03 A 8829', 0, 22);
-
-    } else if (this.type === 'pothole') {
-      // Disable shadow immediately for potholes
-      c.shadowColor = 'transparent';
-      c.shadowBlur = 0;
-      c.shadowOffsetY = 0;
-
-      // --- DRAW POTHOLE (Road surface crater) ---
-      c.fillStyle = '#1C2833'; // Deep crack center
-      c.beginPath();
-      c.ellipse(0, 0, 19, 12, 0, 0, Math.PI * 2);
-      c.fill();
-
-      // Outer rim
-      c.strokeStyle = '#34495E';
+      // Heavy Bumper with Yellow & Black Diagonal Hazard Stripes
+      c.fillStyle = '#FFD600';
+      c.fillRect(-27, 20, 54, 8);
+      c.strokeStyle = '#111';
       c.lineWidth = 2;
+      for (let bx = -24; bx <= 24; bx += 8) {
+        c.beginPath();
+        c.moveTo(bx - 3, 20);
+        c.lineTo(bx + 3, 28);
+        c.stroke();
+      }
+
+      // License Plate
+      c.fillStyle = '#FFEB3B';
+      c.fillRect(-12, 13, 24, 5.5);
+      c.fillStyle = '#000';
+      c.font = 'bold 3.2px sans-serif';
+      c.textAlign = 'center';
+      c.fillText(this.plate || 'MH 01 L 5590', 0, 17);
+
+      // Oversized Mudflaps with Red Reflectors
+      c.fillStyle = '#111';
+      c.fillRect(-26, 28, 9, 10);
+      c.fillRect(17, 28, 9, 10);
+      c.fillStyle = '#FF1744';
+      c.fillRect(-24, 33, 5, 2.5);
+      c.fillRect(19, 33, 5, 2.5);
+
+    } else if (this.type === 'scooter') {
+      // --- DRAW 3D REAR-PERSPECTIVE MOTORBIKE / SCOOTER ---
+      // Rear Tire
+      c.fillStyle = '#111';
+      c.fillRect(-4, 8, 8, 18);
+
+      // Chassis & Mudguard
+      c.fillStyle = this.color;
+      c.beginPath();
+      c.roundRect(-9, -2, 18, 14, [4, 4, 0, 0]);
+      c.fill();
+
+      // Taillight
+      c.fillStyle = '#FF1744';
+      c.fillRect(-5, 0, 10, 4);
+
+      // License Plate
+      c.fillStyle = '#FFEB3B';
+      c.fillRect(-6, 5, 12, 4);
+      c.fillStyle = '#000';
+      c.font = 'bold 2.5px sans-serif';
+      c.textAlign = 'center';
+      c.fillText('MH 04 88', 0, 8);
+
+      // Exhaust Pipe on Right
+      c.fillStyle = '#CFD8DC';
+      c.fillRect(6, 12, 3, 10);
+
+      // Rider Torso (Back profile)
+      c.fillStyle = '#37474F'; // Jacket/shirt
+      c.beginPath();
+      c.roundRect(-10, -22, 20, 20, [6, 6, 2, 2]);
+      c.fill();
+
+      // Rider Arms extending to Handlebars
+      c.strokeStyle = '#37474F';
+      c.lineWidth = 3.5;
+      c.beginPath();
+      c.moveTo(-8, -18); c.lineTo(-14, -14);
+      c.moveTo(8, -18); c.lineTo(14, -14);
       c.stroke();
 
-      // Cracks extending outwards
-      c.strokeStyle = '#273746';
+      // Handlebars and Side Mirrors
+      c.fillStyle = '#CFD8DC';
+      c.fillRect(-15, -16, 30, 2);
+      // Mirrors
+      c.fillStyle = '#ECEFF1';
+      c.fillRect(-16, -20, 3, 4);
+      c.fillRect(13, -20, 3, 4);
+
+      // Rider Helmet (Head from back)
+      c.fillStyle = this.helmetColor;
+      c.beginPath();
+      c.arc(0, -28, 7.5, 0, Math.PI * 2);
+      c.fill();
+      // Helmet dark visor band
+      c.fillStyle = '#111';
+      c.fillRect(-6, -29, 12, 3);
+
+    } else if (this.type === 'truck') {
+      // --- DRAW 3D REAR-PERSPECTIVE TRUCK ("HORN OK PLEASE") ---
+      c.fillStyle = '#1A1A1A';
+      c.fillRect(-26, 20, 6, 18);
+      c.fillRect(20, 20, 6, 18);
+
+      // Heavy Wooden Cargo Box (Traditional painted frame)
+      c.fillStyle = '#D32F2F'; // Red frame
+      c.fillRect(-24, -40, 48, 62);
+      c.fillStyle = '#FFEB3B'; // Bright yellow inner cargo panel
+      c.fillRect(-21, -36, 42, 54);
+
+      // "HORN OK PLEASE" painted across the yellow back panel
+      c.fillStyle = '#000000';
+      c.font = 'bold 8.5px sans-serif';
+      c.textAlign = 'center';
+      c.fillText('HORN', 0, -22);
+      c.fillText('OK', 0, -10);
+      c.fillText('PLEASE', 0, 2);
+
+      // Traditional subtext "DEKHO MAGAR PYAAR SE"
+      c.fillStyle = '#D32F2F';
+      c.font = 'bold 3.5px sans-serif';
+      c.fillText('DEKHO MAGAR PYAAR SE', 0, 11);
+
+      // Hanging Nazar Battu / Black Tassels on bottom corners
+      c.strokeStyle = '#111';
       c.lineWidth = 1.5;
       c.beginPath();
-      c.moveTo(-19, 0); c.lineTo(-27, -2);
-      c.moveTo(19, 0); c.lineTo(26, 4);
-      c.moveTo(0, 12); c.lineTo(2, 20);
-      c.moveTo(0, -12); c.lineTo(-4, -18);
+      c.moveTo(-22, 22); c.lineTo(-24, 30);
+      c.moveTo(22, 22); c.lineTo(24, 30);
       c.stroke();
+      c.fillStyle = '#000';
+      c.beginPath();
+      c.arc(-24, 30, 2, 0, Math.PI * 2);
+      c.arc(24, 30, 2, 0, Math.PI * 2);
+      c.fill();
+
+      // Bumper Hazard Stripes
+      c.fillStyle = '#FFFF00';
+      c.fillRect(-24, 16, 48, 8);
+      c.strokeStyle = '#000000';
+      c.lineWidth = 2;
+      for (let sx = -20; sx <= 20; sx += 8) {
+        c.beginPath();
+        c.moveTo(sx - 3, 16);
+        c.lineTo(sx + 3, 24);
+        c.stroke();
+      }
+
+      // Yellow license plate
+      c.fillStyle = '#FFEB3B';
+      c.fillRect(-10, 8, 20, 5);
+      c.fillStyle = '#000';
+      c.font = 'bold 3.5px sans-serif';
+      c.fillText('MH 02 BG 4821', 0, 12);
 
     } else if (this.type === 'bicycle') {
-      // --- DRAW BICYCLE MILK DELIVERY RIDER ---
-      // Wheels
+      // --- DRAW 3D REAR-PERSPECTIVE DOODHWALA BICYCLE ---
+      // Rear tire
       c.fillStyle = '#111';
-      c.fillRect(-2, -26, 4, 10); // Front wheel
-      c.fillRect(-2, 16, 4, 10);  // Rear wheel
-      
-      // Frame and handles
+      c.fillRect(-2, 2, 4, 18);
+
+      // Rear mudguard
+      c.fillStyle = '#78909C';
+      c.fillRect(-2.5, -4, 5, 8);
+
+      // Luggage carrier frame
       c.strokeStyle = '#546E7A';
       c.lineWidth = 2;
+      c.strokeRect(-8, -8, 16, 6);
+
+      // Two Large Stainless Steel Milk Canisters hanging on left & right
+      c.fillStyle = '#ECEFF1'; // Silver stainless steel
       c.beginPath();
-      c.moveTo(0, -20); c.lineTo(0, 16); // Center bar
-      c.moveTo(-10, -18); c.lineTo(10, -18); // Handlebar
-      c.stroke();
-      
-      // Cargo Milk Canisters (Detail)
-      c.fillStyle = '#B0BEC5'; // Silver canisters
-      c.fillRect(-10, 0, 7, 12);
-      c.fillRect(3, 0, 7, 12);
-      c.fillStyle = '#37474F'; // Lids
-      c.fillRect(-9, -2, 5, 2);
-      c.fillRect(4, -2, 5, 2);
-      
-      // Rider Body (Wearing blue kurta/shirt)
-      c.fillStyle = '#1E88E5';
+      c.roundRect(-14, -6, 8, 15, 2);
+      c.roundRect(6, -6, 8, 15, 2);
+      c.fill();
+      c.strokeStyle = '#B0BEC5';
+      c.lineWidth = 1;
+      c.strokeRect(-14, -6, 8, 15);
+      c.strokeRect(6, -6, 8, 15);
+      // Canister Lids & Handles
+      c.fillStyle = '#37474F';
+      c.fillRect(-13, -8, 6, 2);
+      c.fillRect(7, -8, 6, 2);
+
+      // Rider Torso (Kurta)
+      c.fillStyle = '#1E88E5'; // Blue kurta
       c.beginPath();
-      c.ellipse(0, -5, 8, 12, 0, 0, Math.PI * 2);
+      c.roundRect(-7, -24, 14, 18, [4, 4, 0, 0]);
       c.fill();
 
-      // Disable shadow for fine details
-      c.shadowColor = 'transparent';
-      c.shadowBlur = 0;
-      c.shadowOffsetY = 0;
-      
-      // Rider Head
+      // Rider Head with Nehru Cap / Turban
       c.fillStyle = '#FFCC80';
       c.beginPath();
-      c.arc(0, -12, 5, 0, Math.PI * 2);
+      c.arc(0, -29, 5, 0, Math.PI * 2);
       c.fill();
-      // Black hair/cap
-      c.fillStyle = '#37474F';
-      c.beginPath();
-      c.arc(0, -13, 5, Math.PI, 0);
-      c.fill();
+      c.fillStyle = '#ECEFF1'; // White cap
+      c.fillRect(-4, -34, 8, 4);
 
     } else if (this.type === 'dog') {
-      // --- DRAW STRAY DOG (Side/Rear-Quarter Animated Trot Profile) ---
-      c.save();
-      
-      // Animated walking legs (Trot leg cycle!)
+      // --- DRAW STRAY DOG (Trotting Profile) ---
       let walkCycle = Math.sin(Date.now() * 0.015);
-      c.strokeStyle = '#C68E17'; // Darker gold/tan for legs
+      c.strokeStyle = '#C68E17';
       c.lineWidth = 3;
       
-      // Left Front leg
       c.beginPath();
-      c.moveTo(-6, 2);
-      c.lineTo(-9 + walkCycle * 4, 16);
-      c.stroke();
-      
-      // Right Front leg
-      c.beginPath();
-      c.moveTo(-3, 2);
-      c.lineTo(-1 - walkCycle * 4, 16);
-      c.stroke();
-      
-      // Left Rear leg
-      c.beginPath();
-      c.moveTo(4, 2);
-      c.lineTo(2 + walkCycle * 4, 16);
-      c.stroke();
-      
-      // Right Rear leg
-      c.beginPath();
-      c.moveTo(7, 2);
-      c.lineTo(9 - walkCycle * 4, 16);
+      c.moveTo(-6, 2); c.lineTo(-9 + walkCycle * 4, 16);
+      c.moveTo(-3, 2); c.lineTo(-1 - walkCycle * 4, 16);
+      c.moveTo(4, 2); c.lineTo(2 + walkCycle * 4, 16);
+      c.moveTo(7, 2); c.lineTo(9 - walkCycle * 4, 16);
       c.stroke();
 
-      // Paws (brown pads)
-      c.fillStyle = '#5C2E0B';
-      c.fillRect(-11 + walkCycle * 4, 14, 4, 2);
-      c.fillRect(-3 - walkCycle * 4, 14, 4, 2);
-      c.fillRect(1 + walkCycle * 4, 14, 4, 2);
-      c.fillRect(7 - walkCycle * 4, 14, 4, 2);
-
-      // Body (Elongated side-profile oval, light tan coat)
-      c.fillStyle = '#D2B48C'; // Light tan
+      // Body
+      c.fillStyle = '#D2B48C';
       c.beginPath();
       c.ellipse(0, -2, 12, 8, Math.PI / 16, 0, Math.PI * 2);
       c.fill();
 
-      // Disable shadow for fine details
-      c.shadowColor = 'transparent';
-      c.shadowBlur = 0;
-      c.shadowOffsetY = 0;
-      
-      // Dog patches (Classic stray dog markings)
-      c.fillStyle = '#5C2E0B'; // Dark brown patch on back
+      // Head
       c.beginPath();
-      c.ellipse(3, -3, 7, 5, Math.PI / 10, 0, Math.PI * 2);
+      c.ellipse(-10, -10, 7, 7, 0, 0, Math.PI * 2);
       c.fill();
-      
-      // Neck & Head (extended forward and up to the left)
-      c.fillStyle = '#D2B48C';
-      c.beginPath();
-      c.ellipse(-10, -10, 7, 7, 0, 0, Math.PI * 2); // Head
-      c.fill();
-      
-      // Pointed upright ears (Pariah dog style)
-      c.fillStyle = '#A87C43';
-      c.beginPath();
-      c.moveTo(-14, -14);
-      c.lineTo(-17, -23);
-      c.lineTo(-11, -16);
-      c.closePath();
-      c.fill();
-      c.beginPath();
-      c.moveTo(-7, -14);
-      c.lineTo(-8, -23);
-      c.lineTo(-5, -16);
-      c.closePath();
-      c.fill();
-      
-      // Snout/Muzzle extending forward/left
-      c.fillStyle = '#8B5A2B';
-      c.fillRect(-16, -11, 6, 4);
-      c.fillStyle = '#111'; // Black nose
-      c.fillRect(-17, -11, 2, 2.5);
-      
-      // Wagging curly tail pointing up
+
+      // Wagging tail
       c.save();
       c.translate(10, -6);
-      let tailWag = Math.sin(Date.now() * 0.22) * 0.4;
-      c.rotate(tailWag);
+      c.rotate(Math.sin(Date.now() * 0.22) * 0.4);
       c.strokeStyle = '#D2B48C';
       c.lineWidth = 3.5;
       c.beginPath();
-      c.arc(0, 0, 8, Math.PI, Math.PI * 1.7); // Curving tail up
+      c.arc(0, 0, 8, Math.PI, Math.PI * 1.7);
       c.stroke();
       c.restore();
-      
-      c.restore();
+
+    } else if (this.type === 'pothole') {
+      // --- DRAW POTHOLE (Road surface crater) ---
+      c.fillStyle = '#1C2833';
+      c.beginPath();
+      c.ellipse(0, 0, 18, 10, 0, 0, Math.PI * 2);
+      c.fill();
+
+      c.strokeStyle = '#34495E';
+      c.lineWidth = 2;
+      c.stroke();
+
+      c.strokeStyle = '#273746';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(-18, 0); c.lineTo(-24, -2);
+      c.moveTo(18, 0); c.lineTo(24, 3);
+      c.stroke();
     }
 
     c.restore();
@@ -867,7 +1370,7 @@ class Collectible {
   }
 
   update() {
-    this.y += state.speed;
+    this.y += state.speed * WORLD_SPEED_MULT;
     this.angle += 0.05;
   }
 
@@ -1004,7 +1507,7 @@ class Passenger {
 
   update() {
     if (!this.pickedUp) {
-      this.y += state.speed;
+      this.y += state.speed * WORLD_SPEED_MULT;
       this.waveTimer += 0.15;
     }
   }
@@ -1074,7 +1577,7 @@ class DestinationZone {
   }
 
   update() {
-    this.y += state.speed;
+    this.y += state.speed * WORLD_SPEED_MULT;
   }
 
   draw(c) {
@@ -1169,7 +1672,7 @@ class SceneryItem {
   }
 
   update() {
-    this.y += state.speed;
+    this.y += state.speed * WORLD_SPEED_MULT;
   }
 
   draw(c) {
@@ -1586,7 +2089,15 @@ let hornEffectFrames = 0; // Visual overlay when player honks
 // Initiate all entities for a fresh game
 function initEntities() {
   rickshaw = new Rickshaw();
-  obstacles = [];
+  // Pre-seed traffic ahead on the road so lively Indian traffic is visible from the very first second
+  obstacles = [
+    new Obstacle(0, 'bus', 60),      // Red city bus ahead in left lane
+    new Obstacle(1, 'taxi', 180),    // Kaali-Peeli taxi in center lane
+    new Obstacle(2, 'scooter', 300), // Commuter scooter in right lane
+    new Obstacle(1, 'cow', -60),     // Sacred cow standing ahead
+    new Obstacle(0, 'car', -180),    // Modern passenger car approaching
+    new Obstacle(2, 'bicycle', -290) // Doodhwala delivery bicycle
+  ];
   collectibles = [];
   particles = [];
   scenery = [];
@@ -1594,15 +2105,15 @@ function initEntities() {
   state.destination = null;
 
   // Pre-fill some scenery along the highway
-  for (let y = 100; y < GAME_HEIGHT; y += 120) {
+  for (let y = 80; y < GAME_HEIGHT; y += 90) {
     scenery.push(new SceneryItem(y));
   }
 
   nextSpawns = {
-    obstacle: 80,
-    collectible: 40,
-    scenery: 60,
-    passenger: 400 // Drop passenger spawn timer out a bit
+    obstacle: 25,
+    collectible: 20,
+    scenery: 10,
+    passenger: 300
   };
 }
 
@@ -2021,16 +2532,16 @@ function drawHorizonBackground(c) {
   c.restore();
 }
 
-// 3D Perspective Road segments loop
+// 3D Perspective Road segments loop (High Clarity & Indian Street Realism)
 function drawRoad3D(c) {
-  // Fill the entire ground area below the horizon with grey concrete pavement first
-  c.fillStyle = '#788890'; // Dusty slate grey pavement
+  // Fill the ground area below the horizon with realistic paver sidewalk tone
+  c.fillStyle = '#8D7B68'; // Dusty roadside earth tone
   c.fillRect(0, HORIZON_Y, GAME_WIDTH, GAME_HEIGHT - HORIZON_Y);
 
   let startZ = - (roadOffset % SEGMENT_LENGTH);
   let segmentIndex = Math.floor(roadOffset / SEGMENT_LENGTH);
   
-  // Loop segments starting from behind the camera (z = startZ - 120) to cover the bottom of screen
+  // Loop segments starting from behind the camera (z = startZ - 120) to cover bottom of screen
   for (let z = startZ - 120; z < 1800; z += SEGMENT_LENGTH) {
     let z1 = z;
     let z2 = z + SEGMENT_LENGTH;
@@ -2044,38 +2555,25 @@ function drawRoad3D(c) {
     let p2_left = project(ROAD.leftBorder, y2);
     let p2_right = project(ROAD.rightBorder, y2);
     
-    // Colors alternate for segments
+    // Segment alternating index
     let activeIdx = segmentIndex + Math.floor(z / SEGMENT_LENGTH);
     let isEven = (activeIdx % 2 === 0);
     
-    // 1. Concrete slate sidewalks
-    c.fillStyle = isEven ? '#6E7D84' : '#78878F';
+    // 1. Interlocking Paver Sidewalks (Indian Footpath Tiles)
+    c.fillStyle = isEven ? '#A08875' : '#B29B88';
     c.fillRect(0, p2_left.y, GAME_WIDTH, p1_left.y - p2_left.y + 1);
     
-    // 2. Concrete curbs
-    // Left Curb
-    let p1_shL = project(ROAD.leftBorder - 10, y1);
-    let p2_shL = project(ROAD.leftBorder - 10, y2);
-    c.fillStyle = '#B0BEC5'; // Silver-concrete curb block
-    c.beginPath();
-    c.moveTo(p1_shL.x, p1_shL.y);
-    c.lineTo(p2_shL.x, p2_shL.y);
-    c.lineTo(p2_left.x, p2_left.y);
-    c.lineTo(p1_left.x, p1_left.y);
-    c.fill();
-    
-    // Right Curb
-    let p1_shR = project(ROAD.rightBorder + 10, y1);
-    let p2_shR = project(ROAD.rightBorder + 10, y2);
-    c.beginPath();
-    c.moveTo(p1_right.x, p1_right.y);
-    c.lineTo(p2_right.x, p2_right.y);
-    c.lineTo(p2_shR.x, p2_shR.y);
-    c.lineTo(p1_shR.x, p1_shR.y);
-    c.fill();
-    
-    // 3. Asphalt road center
-    c.fillStyle = '#3E3E3E'; // Dusty dark asphalt
+    // Sidewalk curb-edge dust verge
+    let p1_vergL = project(ROAD.leftBorder - 18, y1);
+    let p2_vergL = project(ROAD.leftBorder - 18, y2);
+    let p1_vergR = project(ROAD.rightBorder + 18, y1);
+    let p2_vergR = project(ROAD.rightBorder + 18, y2);
+    c.fillStyle = isEven ? '#7D6A58' : '#887563';
+    c.fillRect(0, p2_vergL.y, p1_vergL.x, p1_vergL.y - p2_vergL.y + 1);
+    c.fillRect(p1_vergR.x, p2_vergR.y, GAME_WIDTH - p1_vergR.x, p1_vergR.y - p2_vergR.y + 1);
+
+    // 2. High-Contrast Asphalt Road Center (Charcoal Bitumen Tarmac)
+    c.fillStyle = isEven ? '#24272A' : '#2A2E32';
     c.beginPath();
     c.moveTo(p1_left.x, p1_left.y);
     c.lineTo(p2_left.x, p2_left.y);
@@ -2083,11 +2581,13 @@ function drawRoad3D(c) {
     c.lineTo(p1_right.x, p1_right.y);
     c.fill();
     
-    // 4. Curb Rumble Strips (alternating red/white curb borders)
-    c.fillStyle = isEven ? '#EEEEEE' : '#D32F2F';
-    // Left curb
-    let p1_curbL = project(ROAD.leftBorder - 3, y1);
-    let p2_curbL = project(ROAD.leftBorder - 3, y2);
+    // 3. Indian Municipal Alternating Yellow & Black Kerbstones (Curb Blocks with 3D Bevel)
+    let curbColor = isEven ? '#FFD600' : '#1A1A1A'; // Classic Mumbai/Delhi municipal curbs
+    c.fillStyle = curbColor;
+    
+    // Left Curb Stone
+    let p1_curbL = project(ROAD.leftBorder - 10, y1);
+    let p2_curbL = project(ROAD.leftBorder - 10, y2);
     c.beginPath();
     c.moveTo(p1_curbL.x, p1_curbL.y);
     c.lineTo(p2_curbL.x, p2_curbL.y);
@@ -2095,19 +2595,49 @@ function drawRoad3D(c) {
     c.lineTo(p1_left.x, p1_left.y);
     c.fill();
     
-    // Right curb
-    let p1_curbR = project(ROAD.rightBorder + 3, y1);
-    let p2_curbR = project(ROAD.rightBorder + 3, y2);
+    // Right Curb Stone
+    let p1_curbR = project(ROAD.rightBorder + 10, y1);
+    let p2_curbR = project(ROAD.rightBorder + 10, y2);
     c.beginPath();
     c.moveTo(p1_right.x, p1_right.y);
     c.lineTo(p2_right.x, p2_right.y);
     c.lineTo(p2_curbR.x, p2_curbR.y);
     c.lineTo(p1_curbR.x, p1_curbR.y);
     c.fill();
+
+    // Curb 3D Top-Edge Highlight
+    c.fillStyle = isEven ? '#FFF176' : '#424242';
+    let p1_edgeL = project(ROAD.leftBorder - 2, y1);
+    let p2_edgeL = project(ROAD.leftBorder - 2, y2);
+    c.beginPath();
+    c.moveTo(p1_edgeL.x, p1_edgeL.y);
+    c.lineTo(p2_edgeL.x, p2_edgeL.y);
+    c.lineTo(p2_left.x, p2_left.y);
+    c.lineTo(p1_left.x, p1_left.y);
+    c.fill();
     
-    // 5. Dashed Yellow Lane lines (even segments only)
+    // 4. Solid White Edge Lines (Tar border boundary)
+    c.fillStyle = '#ECEFF1';
+    let p1_edg1 = project(ROAD.leftBorder + 3, y1);
+    let p2_edg1 = project(ROAD.leftBorder + 3, y2);
+    let p1_edg2 = project(ROAD.rightBorder - 3, y1);
+    let p2_edg2 = project(ROAD.rightBorder - 3, y2);
+    let edgeW1 = 2.0 * p1_left.scale;
+    let edgeW2 = 2.0 * p2_left.scale;
+
+    c.beginPath();
+    c.moveTo(p1_edg1.x, p1_edg1.y); c.lineTo(p2_edg1.x, p2_edg1.y);
+    c.lineTo(p2_edg1.x + edgeW2, p2_edg1.y); c.lineTo(p1_edg1.x + edgeW1, p1_edg1.y);
+    c.fill();
+
+    c.beginPath();
+    c.moveTo(p1_edg2.x, p1_edg2.y); c.lineTo(p2_edg2.x, p2_edg2.y);
+    c.lineTo(p2_edg2.x - edgeW2, p2_edg2.y); c.lineTo(p1_edg2.x - edgeW1, p1_edg2.y);
+    c.fill();
+    
+    // 5. Dashed Yellow Lane Lines & Cat's Eyes Road Studs
     if (isEven) {
-      c.fillStyle = '#FFD54F';
+      c.fillStyle = '#FFD54F'; // Vibrant Indian Yellow Lane Paint
       let laneW = ROAD.width / 3;
       
       let p1_ln1 = project(ROAD.leftBorder + laneW, y1);
@@ -2115,8 +2645,8 @@ function drawRoad3D(c) {
       let p1_ln2 = project(ROAD.leftBorder + laneW * 2, y1);
       let p2_ln2 = project(ROAD.leftBorder + laneW * 2, y2);
       
-      let sw1 = 3.5 * p1_left.scale;
-      let sw2 = 3.5 * p2_left.scale;
+      let sw1 = 3.2 * p1_left.scale;
+      let sw2 = 3.2 * p2_left.scale;
       
       c.beginPath();
       c.moveTo(p1_ln1.x - sw1 / 2, p1_ln1.y);
@@ -2131,17 +2661,31 @@ function drawRoad3D(c) {
       c.lineTo(p2_ln2.x + sw2 / 2, p2_ln2.y);
       c.lineTo(p1_ln2.x + sw1 / 2, p1_ln2.y);
       c.fill();
+
+      // Retroreflective Road Studs ("Cat's Eyes" along lane dividers)
+      let studSize = Math.max(1.2, 3.0 * p1_left.scale);
+      c.fillStyle = '#FFFDE7';
+      c.beginPath();
+      c.arc(p1_ln1.x, p1_ln1.y, studSize, 0, Math.PI * 2);
+      c.arc(p1_ln2.x, p1_ln2.y, studSize, 0, Math.PI * 2);
+      c.fill();
+      // Amber reflector highlight
+      c.fillStyle = '#FFA000';
+      c.beginPath();
+      c.arc(p1_ln1.x, p1_ln1.y, studSize * 0.5, 0, Math.PI * 2);
+      c.arc(p1_ln2.x, p1_ln2.y, studSize * 0.5, 0, Math.PI * 2);
+      c.fill();
     }
   }
 
-  // Taper the asphalt road to a point at the horizon center to cover the gap at the top
+  // Taper asphalt road to horizon vanishing center point
   let lastZ = 1800;
   let y_last = PLAYER_Y - lastZ;
   let p_last_L = project(ROAD.leftBorder, y_last);
   let p_last_R = project(ROAD.rightBorder, y_last);
-  let p_horizon = project(ROAD_CENTER_X, PLAYER_Y - 5000); // Shifting center at horizon
+  let p_horizon = project(ROAD_CENTER_X, PLAYER_Y - 5000);
   
-  c.fillStyle = '#3E3E3E'; // Dusty dark asphalt
+  c.fillStyle = '#24272A';
   c.beginPath();
   c.moveTo(p_last_L.x, p_last_L.y);
   c.lineTo(p_horizon.x, HORIZON_Y);
@@ -2149,8 +2693,8 @@ function drawRoad3D(c) {
   c.closePath();
   c.fill();
 
-  // Draw a smooth linear atmospheric haze gradient over the road vanishing point
-  let hazeGrad = c.createLinearGradient(0, HORIZON_Y, 0, HORIZON_Y + 120);
+  // Smooth atmospheric perspective haze gradient near horizon
+  let hazeGrad = c.createLinearGradient(0, HORIZON_Y, 0, HORIZON_Y + 110);
   let hazeColor = '#FF8A80'; // fallback
   if (state.city === 'delhi') hazeColor = '#FFCC80';
   else if (state.city === 'mumbai') hazeColor = '#FF80AB';
@@ -2159,10 +2703,10 @@ function drawRoad3D(c) {
   else hazeColor = '#80DEEA'; // kolkata
   
   hazeGrad.addColorStop(0, hazeColor);
-  hazeGrad.addColorStop(0.2, hazeColor); // Solid color right at the horizon line
-  hazeGrad.addColorStop(1, 'transparent'); // Fades to reveal the asphalt road
+  hazeGrad.addColorStop(0.2, hazeColor);
+  hazeGrad.addColorStop(1, 'transparent');
   c.fillStyle = hazeGrad;
-  c.fillRect(0, HORIZON_Y, GAME_WIDTH, 120);
+  c.fillRect(0, HORIZON_Y, GAME_WIDTH, 110);
   
   // Honk Ripple Wave Visual Effect in 3D Perspective
   if (hornEffectFrames > 0) {
@@ -2392,6 +2936,24 @@ function drawCockpit(c) {
 
 function triggerHornEffect() {
   hornEffectFrames = 20;
+
+  // Honking alerts nearby traffic and clears the road path
+  obstacles.forEach(item => {
+    const distY = rickshaw ? (rickshaw.y - item.y) : 0;
+    const distX = rickshaw ? Math.abs(rickshaw.x - item.x) : 0;
+    if (distY > 0 && distY < 240 && distX < 70) {
+      if (item.type === 'dog' || item.type === 'bicycle') {
+        // Nudges towards roadside curb safely
+        item.x += (item.x < ROAD_CENTER_X ? -18 : 18);
+      } else if (item.type === 'car' || item.type === 'taxi' || item.type === 'scooter') {
+        // Accelerates forward to ease traffic flow
+        item.speed += 0.5;
+      } else if (item.type === 'cow') {
+        // Peaceful floral sparkle
+        spawnBlessingPetals(item.x, item.y);
+      }
+    }
+  });
 }
 
 // ==========================================
@@ -2452,6 +3014,55 @@ function spawnCoinSparkles(x, y) {
   }
 }
 
+// Sacred flower petals & divine sparkles on Cow's Blessing
+function spawnBlessingPetals(x, y) {
+  const petalColors = ['#FF9800', '#FFEB3B', '#FF5722', '#E91E63', '#FFF176'];
+  for (let i = 0; i < 22; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.0 + Math.random() * 3.5;
+    const color = petalColors[Math.floor(Math.random() * petalColors.length)];
+    particles.push(new Particle(
+      x + (Math.random() - 0.5) * 30,
+      y + (Math.random() - 0.5) * 20,
+      color,
+      3.5 + Math.random() * 3,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed - 1.8, // Float upwards
+      45 + Math.random() * 30,
+      'petal'
+    ));
+  }
+  for (let i = 0; i < 12; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.8 + Math.random() * 2.5;
+    particles.push(new Particle(
+      x,
+      y,
+      '#FFF9C4',
+      2.5 + Math.random() * 2,
+      Math.cos(angle) * speed,
+      Math.sin(angle) * speed - 1.2,
+      35 + Math.random() * 20,
+      'sparkle'
+    ));
+  }
+}
+
+// Sacred Cow Blessing Toast Notification Helper
+let blessingToastTimeout = null;
+function showBlessingBanner(text) {
+  const toast = document.getElementById('blessing-toast');
+  const msg = document.getElementById('blessing-msg');
+  if (toast && msg) {
+    msg.innerText = text;
+    toast.classList.remove('hidden');
+    if (blessingToastTimeout) clearTimeout(blessingToastTimeout);
+    blessingToastTimeout = setTimeout(() => {
+      toast.classList.add('hidden');
+    }, 2800);
+  }
+}
+
 // ==========================================
 // GAME LOOP & STATE MANAGER
 // ==========================================
@@ -2472,13 +3083,12 @@ function update(time) {
   }
 
   if (state.screen === 'playing') {
-    // 1. Acceleration / Engine Physics
-    // Auto-accelerate forward
+    // 1. Acceleration / Engine Physics (Calibrated to Authentic Indian City Speeds)
     state.targetSpeed = state.maxSpeed;
     
     // Cutting Chai speed boost
     if (state.activeShield > 0) {
-      state.targetSpeed = state.maxSpeed * 1.5;
+      state.targetSpeed = state.maxSpeed * 1.55; // Reaches ~48-52 km/h top boost
       state.activeShield--;
       // Update UI bar
       const bar = document.getElementById('shield-bar');
@@ -2489,31 +3099,44 @@ function update(time) {
     }
 
     // Smooth speed interpolation
-    state.speed += (state.targetSpeed - state.speed) * 0.05;
+    state.speed += (state.targetSpeed - state.speed) * 0.04;
     gameAudio.setEngineSpeed(state.speed / state.maxSpeed);
 
-    // Track statistics
-    state.distance += state.speed * 0.05; // speed scaled down to arbitrary km count
+    // Continuous 3D Road Scroll Animation (Brisk, exciting visual motion)
+    roadOffset += state.speed * 4.2;
+
+    // Track statistics (Real-world calibrated numbers)
+    state.distance += state.speed * 0.03;
     document.getElementById('distance-val').innerText = (state.distance / 10).toFixed(1) + ' km';
-    document.getElementById('speed-val').innerText = Math.round(state.speed * 10) + ' km/h';
+    // Calibrated speedometer: cruising ~28-34 km/h, boost ~48-52 km/h
+    document.getElementById('speed-val').innerText = Math.round(state.speed * 12) + ' km/h';
 
     // Difficulty Level Scaling
     state.level = 1 + Math.floor(state.distance / 100);
-    state.maxSpeed = 8 + (state.level * 0.5); // Speed up slightly over time
+    state.maxSpeed = 2.6 + (state.level * 0.12); // Subtle realistic progression
 
     // 2. Handle Player
     rickshaw.update();
 
-    // 3. Spawn Entities based on timers
+    // 3. Spawn Entities (Rich Traffic Variety & Rare Potholes)
     nextSpawns.obstacle--;
     if (nextSpawns.obstacle <= 0) {
-      // Choose random lane and obstacle type
       const lane = Math.floor(Math.random() * 3);
-      // Potholes spawn more frequently at lower levels, trucks/cow at higher levels
-      const types = ['pothole', 'taxi', 'truck', 'cow', 'bicycle', 'dog'];
-      const type = types[Math.floor(Math.random() * types.length)];
-      obstacles.push(new Obstacle(lane, type));
-      nextSpawns.obstacle = Math.max(35, 90 - state.level * 8) + Math.random() * 50;
+      // Weighted selection for rich traffic variety with reduced potholes:
+      const rand = Math.random();
+      let type;
+      if (rand < 0.18) type = 'car';        // 18% Private Cars
+      else if (rand < 0.36) type = 'taxi';  // 18% Kaali-Peeli Taxis
+      else if (rand < 0.52) type = 'scooter';// 16% Two-wheelers
+      else if (rand < 0.66) type = 'truck'; // 14% Cargo Trucks
+      else if (rand < 0.78) type = 'bus';   // 12% City Buses
+      else if (rand < 0.88) type = 'cow';   // 10% Sacred Cows (Blessings!)
+      else if (rand < 0.94) type = 'bicycle';// 6% Doodhwala Cyclists
+      else if (rand < 0.97) type = 'dog';   // 3% Stray Dogs
+      else type = 'pothole';                // Only 3% Potholes!
+
+      obstacles.push(new Obstacle(lane, type, -120));
+      nextSpawns.obstacle = Math.max(14, 28 - state.level * 2) + Math.random() * 16;
     }
 
     nextSpawns.collectible--;
@@ -2526,14 +3149,14 @@ function update(time) {
       else if (roll > 0.78) type = 'samosa';
 
       collectibles.push(new Collectible(lane, type));
-      nextSpawns.collectible = 35 + Math.random() * 45;
+      nextSpawns.collectible = 25 + Math.random() * 35;
     }
 
     nextSpawns.scenery--;
     if (nextSpawns.scenery <= 0) {
       scenery.push(new SceneryItem());
       // Spawn scenery extremely frequently for a packed, bustling street appearance
-      nextSpawns.scenery = 5 + Math.random() * 5;
+      nextSpawns.scenery = 4 + Math.random() * 4;
     }
 
     // Passenger Spawn Logic (Only if we don't have one active/on-board)
@@ -2562,10 +3185,12 @@ function update(time) {
           gameAudio.playCoin();
           spawnCoinSparkles(item.x, item.y);
         } else if (item.type === 'samosa') {
-          state.health = Math.min(state.maxHealth, state.health + 20);
+          state.health = Math.min(state.maxHealth, state.health + 10);
           document.getElementById('health-bar').style.width = state.health + '%';
+          const hNum = document.getElementById('health-num');
+          if (hNum) hNum.innerText = Math.round(state.health) + '%';
           gameAudio.playHeal();
-          spawnCoinSparkles(item.x, item.y); // sparkle green-ish particles later
+          spawnCoinSparkles(item.x, item.y);
         } else if (item.type === 'chai') {
           state.activeShield = state.activeShieldMax;
           document.getElementById('shield-gauge-container').classList.remove('hidden');
@@ -2622,7 +3247,7 @@ function update(time) {
       } else if (state.destination.y > GAME_HEIGHT + 100) {
         // Destination zone missed!
         state.destination = null;
-        state.passenger = null; // passenger leaves rickshaw in disappointment
+        state.passenger = null;
         document.getElementById('passenger-status').classList.add('hidden');
       }
     }
@@ -2630,20 +3255,36 @@ function update(time) {
     // 7. Update Obstacles & Traffic
     obstacles.forEach(item => item.update());
     
-    // Obstacle Collisions
+    // Obstacle Collisions & Sacred Cow Blessings
     obstacles.forEach((item, index) => {
       if (checkCollision(rickshaw.getBounds(), item.getBounds())) {
-        // Collision!
-        if (state.activeShield > 0) {
-          // Shield blocks the collision, blows up the traffic car instead!
+        if (item.type === 'cow') {
+          // --- SACRED COW BLESSING (Gau Mata's Auspicious Grace) ---
+          // Restores +15 HP, grants bonus rupees, showers marigold petals & plays temple chime!
+          state.health = Math.min(state.maxHealth, state.health + 15);
+          state.score += 50;
+          document.getElementById('health-bar').style.width = state.health + '%';
+          const hNum = document.getElementById('health-num');
+          if (hNum) hNum.innerText = Math.round(state.health) + '%';
+          document.getElementById('score-val').innerText = '₹ ' + state.score;
+          
+          gameAudio.playTempleBell();
+          spawnBlessingPetals(item.x, item.y);
+          showBlessingBanner("Gau Mata's Blessing! 🙏 +Health & +₹50");
+          
+          obstacles.splice(index, 1);
+        } else if (state.activeShield > 0) {
+          // Shield blocks the collision, blows up the traffic obstacle instead!
           spawnSparks(item.x, item.y, '#00E5FF');
           gameAudio.playCrash();
           obstacles.splice(index, 1);
           triggerScreenShake(8);
         } else {
-          // Regular damage taken
+          // Regular vehicular / road hazard damage taken
           state.health -= item.damage;
           document.getElementById('health-bar').style.width = Math.max(0, state.health) + '%';
+          const hNum = document.getElementById('health-num');
+          if (hNum) hNum.innerText = Math.max(0, Math.round(state.health)) + '%';
           
           spawnSparks(item.x, item.y, '#FF1744');
           gameAudio.playCrash();
@@ -2715,7 +3356,7 @@ function draw() {
     renderList.push({ y: item.y, draw: (c) => item.draw(c) });
   });
 
-  // Traffic and obstacles (Cows, Trucks, Taxis, Potholes)
+  // Traffic and obstacles (Cows, Cars, Taxis, Buses, Scooters, Trucks, Potholes)
   obstacles.forEach(item => {
     renderList.push({ y: item.y, draw: (c) => item.draw(c) });
   });
@@ -2725,7 +3366,7 @@ function draw() {
     renderList.push({ y: rickshaw.y, draw: (c) => rickshaw.draw(c) });
   }
 
-  // Particle systems (Smoke and sparks)
+  // Particle systems (Smoke, sparks, petals)
   particles.forEach(p => {
     renderList.push({ y: p.y, draw: (c) => p.draw(c) });
   });
@@ -2764,13 +3405,22 @@ function startGame() {
   state.score = 0;
   state.distance = 0;
   state.level = 1;
+  state.speed = 0;
+  state.maxSpeed = 2.6;
+  state.targetSpeed = 0;
   state.health = 100;
   state.activeShield = 0;
+  roadOffset = 0;
   
   document.getElementById('score-val').innerText = '₹ 0';
+  document.getElementById('distance-val').innerText = '0.0 km';
+  document.getElementById('speed-val').innerText = '0 km/h';
   document.getElementById('health-bar').style.width = '100%';
+  const hNum = document.getElementById('health-num');
+  if (hNum) hNum.innerText = '100%';
   document.getElementById('shield-gauge-container').classList.add('hidden');
   document.getElementById('passenger-status').classList.add('hidden');
+  document.getElementById('blessing-toast').classList.add('hidden');
 
   initEntities();
   
@@ -2844,25 +3494,55 @@ document.getElementById('exit-btn').addEventListener('click', () => {
 
 // Audio Toggle Button (cycles through All Audio ON -> FX Only -> Muted)
 const audioBtn = document.getElementById('audio-toggle-btn');
-audioBtn.addEventListener('click', () => {
-  const mode = gameAudio.cycleAudioState();
+
+function syncAudioButtonUI() {
+  const btn = document.getElementById('audio-toggle-btn');
+  const audio = (typeof window !== 'undefined' && window.gameAudio) 
+    ? window.gameAudio 
+    : (typeof gameAudio !== 'undefined' ? gameAudio : null);
+
+  if (!btn) return;
+
+  const mode = audio && typeof audio.getAudioStateMode === 'function' 
+    ? audio.getAudioStateMode() 
+    : 'ALL_ON';
+
+  btn.classList.remove('mode-all', 'mode-fx', 'mode-muted');
+
   if (mode === 'ALL_ON') {
-    audioBtn.innerText = "Audio: Sounds & Music ON 🔊⚡";
-    audioBtn.style.background = "";
-    audioBtn.style.color = "";
-    audioBtn.style.borderColor = "";
+    btn.classList.add('mode-all');
+    btn.innerText = "Audio: Sounds & Music ON 🔊⚡";
   } else if (mode === 'FX_ONLY') {
-    audioBtn.innerText = "Audio: Sound FX Only 🔊🪘";
-    audioBtn.style.background = "rgba(13, 92, 117, 0.4)";
-    audioBtn.style.color = "#FFD54F";
-    audioBtn.style.borderColor = "var(--color-rickshaw-yellow)";
+    btn.classList.add('mode-fx');
+    btn.innerText = "Audio: Sound FX Only 🔊🪘";
   } else {
-    audioBtn.innerText = "Audio: Muted 🔇";
-    audioBtn.style.background = "#263238";
-    audioBtn.style.color = "#90A4AE";
-    audioBtn.style.borderColor = "#37474F";
+    btn.classList.add('mode-muted');
+    btn.innerText = "Audio: Muted 🔇";
   }
-});
+}
+
+if (audioBtn) {
+  audioBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const audio = (typeof window !== 'undefined' && window.gameAudio) 
+      ? window.gameAudio 
+      : (typeof gameAudio !== 'undefined' ? gameAudio : null);
+    if (audio && typeof audio.cycleAudioState === 'function') {
+      audio.cycleAudioState();
+    }
+    syncAudioButtonUI();
+  });
+}
+
+// Synchronize audio button immediately on script load
+syncAudioButtonUI();
+// Also synchronize when DOM is fully loaded and ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', syncAudioButtonUI);
+} else {
+  syncAudioButtonUI();
+}
 
 // Camera View Toggle Button
 const cameraBtn = document.getElementById('camera-toggle-btn');

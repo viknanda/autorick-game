@@ -20,7 +20,20 @@ class GameAudio {
 
     // Master Volume
     this.masterGain = null;
-    this.audioState = 0; // 0 = FX & Music, 1 = FX Only, 2 = Muted
+    
+    // Load saved audio preference (0 = All ON, 1 = FX Only, 2 = Muted)
+    const savedAudio = localStorage.getItem('autorick_audio_state');
+    this.audioState = savedAudio !== null ? parseInt(savedAudio, 10) : 0;
+    if (isNaN(this.audioState) || this.audioState < 0 || this.audioState > 2) {
+      this.audioState = 0;
+    }
+    this.muted = (this.audioState === 2);
+  }
+
+  getAudioStateMode() {
+    if (this.audioState === 0) return 'ALL_ON';
+    if (this.audioState === 1) return 'FX_ONLY';
+    return 'MUTED';
   }
 
   // Initialize Audio Context on first interaction (required by browsers)
@@ -71,7 +84,8 @@ class GameAudio {
       
       // Master Gain for easy muting/volume control
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.setValueAtTime(this.muted ? 0 : 2.5, this.ctx.currentTime);
+      const initialVol = (this.audioState === 2) ? 0.0 : 2.5;
+      this.masterGain.gain.setValueAtTime(initialVol, this.ctx.currentTime);
       this.masterGain.connect(this.ctx.destination);
 
       // Initialize Desi Beats Music player
@@ -100,19 +114,16 @@ class GameAudio {
     }
   }
 
-  cycleAudioState() {
-    this.init();
-    if (!this.ctx) return 'ALL_ON';
-    
-    this.audioState = (this.audioState + 1) % 3;
-    
+  setAudioState(newState) {
+    this.audioState = newState;
+    localStorage.setItem('autorick_audio_state', this.audioState);
+
     if (this.audioState === 0) {
       // State 0: All Audio ON
       this.muted = false;
-      if (this.masterGain) {
+      if (this.masterGain && this.ctx) {
         this.masterGain.gain.setValueAtTime(2.5, this.ctx.currentTime);
       }
-      // Start music if not playing
       if (this.music && !this.musicPlaying) {
         this.musicTheme = 'CYBER DESI';
         this.music.start();
@@ -122,10 +133,9 @@ class GameAudio {
     } else if (this.audioState === 1) {
       // State 1: FX Only (Music OFF)
       this.muted = false;
-      if (this.masterGain) {
+      if (this.masterGain && this.ctx) {
         this.masterGain.gain.setValueAtTime(2.5, this.ctx.currentTime);
       }
-      // Stop music
       if (this.music && this.musicPlaying) {
         this.musicTheme = 'OFF';
         this.music.stop();
@@ -135,10 +145,9 @@ class GameAudio {
     } else {
       // State 2: Muted (All OFF)
       this.muted = true;
-      if (this.masterGain) {
+      if (this.masterGain && this.ctx) {
         this.masterGain.gain.setValueAtTime(0.0, this.ctx.currentTime);
       }
-      // Stop music if playing
       if (this.music && this.musicPlaying) {
         this.musicTheme = 'OFF';
         this.music.stop();
@@ -146,6 +155,12 @@ class GameAudio {
       }
       return 'MUTED';
     }
+  }
+
+  cycleAudioState() {
+    this.init();
+    const next = (this.audioState + 1) % 3;
+    return this.setAudioState(next);
   }
 
   // ==========================================
@@ -435,6 +450,39 @@ class GameAudio {
     noiseNode.stop(t + duration);
     bassOsc.stop(t + duration);
   }
+
+  // Sacred Temple Bell (Mandir Ghanti) chime for Cow's Blessing
+  playTempleBell() {
+    this.init();
+    if (!this.ctx || this.muted) return;
+
+    const t = this.ctx.currentTime;
+    const duration = 1.8;
+
+    // Harmonic bell partials (tuned metallic overtones for an authentic brass bell)
+    const frequencies = [1046.5, 2093.0, 3135.9, 4186.0]; // C6 harmonics
+    const gains = [0.25, 0.15, 0.08, 0.04];
+    const decayTimes = [1.8, 1.2, 0.8, 0.5];
+
+    frequencies.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+
+      // Fast bell strike attack followed by natural ringing decay
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(gains[idx], t + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + decayTimes[idx]);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+
+      osc.start(t);
+      osc.stop(t + decayTimes[idx]);
+    });
+  }
 }
 
 // ==========================================
@@ -674,3 +722,9 @@ class DesiMusic {
 
 // Global Audio Instance
 const gameAudio = new GameAudio();
+if (typeof window !== 'undefined') {
+  window.gameAudio = gameAudio;
+}
+if (typeof globalThis !== 'undefined') {
+  globalThis.gameAudio = gameAudio;
+}
