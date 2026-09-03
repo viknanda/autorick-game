@@ -8,7 +8,26 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
-  <!-- CrazyGames SDK v3 (Platform Ad & Analytics Bridge) -->
+  <!-- GameDistribution HTML5 SDK -->
+  <script>
+    window["GD_OPTIONS"] = {
+      "gameId": "75591",
+      "onEvent": function(event) {
+        if (window.portalBridge && typeof window.portalBridge.handleGDEvent === 'function') {
+          window.portalBridge.handleGDEvent(event);
+        }
+      }
+    };
+    (function(d, s, id) {
+      var js, fjs = d.getElementsByTagName(s)[0];
+      if (d.getElementById(id)) return;
+      js = d.createElement(s);
+      js.id = id;
+      js.src = 'https://html5.api.gamedistribution.com/main.min.js';
+      fjs.parentNode.insertBefore(js, fjs);
+    }(document, 'script', 'gamedistribution-jssdk'));
+  </script>
+  <!-- CrazyGames SDK v3 (Fallback/Multiplatform) -->
   <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
   <link rel="stylesheet" href="style.css?v=18">
 </head>

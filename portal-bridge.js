@@ -1,15 +1,17 @@
 /**
  * AutoRick Tour of India - Unified Portal Ad & Analytics Bridge
- * Supports CrazyGames SDK v3 and Poki SDK with automatic fallback for standalone / GitHub Pages.
+ * Supports GameDistribution SDK, CrazyGames SDK v3, and Poki SDK with automatic fallback for standalone / GitHub Pages.
  */
 class PortalBridge {
   constructor() {
-    this.platform = 'standalone'; // 'crazygames' | 'poki' | 'standalone'
+    this.platform = 'standalone'; // 'gamedistribution' | 'crazygames' | 'poki' | 'standalone'
     this.initialized = false;
     this.adInProgress = false;
     this.lastMidgameAdTime = 0;
-    this.minAdIntervalMs = 85000; // 85-second minimum cooldown between midgame ads (platform policy)
+    this.minAdIntervalMs = 45000; // 45-second pacing cooldown between interstitial ads
     this.savedAudioMode = null;
+    this._activeAdCallback = null;
+    this._rewardEarned = false;
   }
 
   /**
@@ -19,7 +21,15 @@ class PortalBridge {
     if (this.initialized) return;
 
     try {
-      // 1. Check CrazyGames SDK v3
+      // 1. Check GameDistribution SDK
+      if (typeof window !== 'undefined' && (window.gdsdk || window.GD_OPTIONS)) {
+        this.platform = 'gamedistribution';
+        this.initialized = true;
+        console.log('[PortalBridge] GameDistribution SDK active.');
+        return;
+      }
+
+      // 2. Check CrazyGames SDK v3
       if (typeof window !== 'undefined' && window.CrazyGames && window.CrazyGames.SDK) {
         try {
           await window.CrazyGames.SDK.init();
@@ -35,7 +45,7 @@ class PortalBridge {
         }
       }
 
-      // 2. Check Poki SDK
+      // 3. Check Poki SDK
       if (typeof window !== 'undefined' && window.PokiSDK) {
         try {
           await window.PokiSDK.init();
@@ -58,6 +68,31 @@ class PortalBridge {
     this.platform = 'standalone';
     this.initialized = true;
     console.log('[PortalBridge] Standalone mode active (mock ad responses enabled).');
+  }
+
+  /**
+   * Handle GameDistribution global SDK events
+   */
+  handleGDEvent(event) {
+    if (!event || !event.name) return;
+    console.log('[PortalBridge] GD Event received:', event.name);
+
+    switch (event.name) {
+      case 'SDK_GAME_PAUSE':
+        this._beforeAd();
+        break;
+      case 'SDK_GAME_START':
+        this._afterAd();
+        if (this._activeAdCallback) {
+          const cb = this._activeAdCallback;
+          this._activeAdCallback = null;
+          cb();
+        }
+        break;
+      case 'SDK_REWARDED_WATCH_COMPLETE':
+        this._rewardEarned = true;
+        break;
+    }
   }
 
   /**
@@ -84,7 +119,6 @@ class PortalBridge {
 
   /**
    * Request a Midgame Interstitial Commercial Break (between runs)
-   * Enforces platform ad pacing cooldown (85s)
    */
   showMidgameAd(onComplete) {
     const callback = typeof onComplete === 'function' ? onComplete : () => {};
@@ -104,9 +138,35 @@ class PortalBridge {
     }
 
     this._beforeAd();
+    this.lastMidgameAdTime = now;
 
+    // 1. GameDistribution
+    if (this.platform === 'gamedistribution' || (typeof window !== 'undefined' && typeof window.gdsdk !== 'undefined')) {
+      this._activeAdCallback = callback;
+      if (window.gdsdk && typeof window.gdsdk.showAd === 'function') {
+        window.gdsdk.showAd().then(() => {
+          this._afterAd();
+          if (this._activeAdCallback) {
+            this._activeAdCallback();
+            this._activeAdCallback = null;
+          }
+        }).catch((err) => {
+          console.warn('[PortalBridge] GameDistribution midgame ad catch/skip:', err);
+          this._afterAd();
+          if (this._activeAdCallback) {
+            this._activeAdCallback();
+            this._activeAdCallback = null;
+          }
+        });
+      } else {
+        this._afterAd();
+        callback();
+      }
+      return;
+    }
+
+    // 2. CrazyGames
     if (this.platform === 'crazygames' && window.CrazyGames?.SDK?.ad?.requestAd) {
-      this.lastMidgameAdTime = now;
       window.CrazyGames.SDK.ad.requestAd('midgame', {
         adStarted: () => {
           this._beforeAd();
@@ -121,8 +181,11 @@ class PortalBridge {
           callback();
         }
       });
-    } else if (this.platform === 'poki' && window.PokiSDK?.commercialBreak) {
-      this.lastMidgameAdTime = now;
+      return;
+    }
+
+    // 3. Poki
+    if (this.platform === 'poki' && window.PokiSDK?.commercialBreak) {
       window.PokiSDK.commercialBreak(() => {
         this._beforeAd();
       }).then(() => {
@@ -133,10 +196,11 @@ class PortalBridge {
         this._afterAd();
         callback();
       });
-    } else {
-      this._afterAd();
-      callback();
+      return;
     }
+
+    this._afterAd();
+    callback();
   }
 
   /**
@@ -147,7 +211,7 @@ class PortalBridge {
     const successCb = typeof onRewarded === 'function' ? onRewarded : () => {};
     const dismissCb = typeof onDismiss === 'function' ? onDismiss : () => {};
 
-    // Standalone / GitHub Pages fallback: instant reward with brief visual notification
+    // Standalone / GitHub Pages fallback: instant reward
     if (this.platform === 'standalone') {
       console.log('[PortalBridge] Standalone mode: simulated rewarded ad success.');
       successCb();
@@ -156,6 +220,41 @@ class PortalBridge {
 
     this._beforeAd();
 
+    // 1. GameDistribution Rewarded Video
+    if (this.platform === 'gamedistribution' || (typeof window !== 'undefined' && typeof window.gdsdk !== 'undefined')) {
+      this._rewardEarned = false;
+      this._activeAdCallback = () => {
+        if (this._rewardEarned) {
+          successCb();
+        } else {
+          dismissCb();
+        }
+      };
+
+      if (window.gdsdk && typeof window.gdsdk.showAd === 'function') {
+        const adType = (window.gdsdk.AdType && window.gdsdk.AdType.Rewarded) ? window.gdsdk.AdType.Rewarded : 'rewarded';
+        window.gdsdk.showAd(adType).then(() => {
+          this._afterAd();
+          if (this._activeAdCallback) {
+            this._activeAdCallback();
+            this._activeAdCallback = null;
+          }
+        }).catch((err) => {
+          console.warn('[PortalBridge] GameDistribution rewarded ad catch/skip:', err);
+          this._afterAd();
+          if (this._activeAdCallback) {
+            this._activeAdCallback();
+            this._activeAdCallback = null;
+          }
+        });
+      } else {
+        this._afterAd();
+        successCb();
+      }
+      return;
+    }
+
+    // 2. CrazyGames Rewarded Video
     if (this.platform === 'crazygames' && window.CrazyGames?.SDK?.ad?.requestAd) {
       let rewarded = false;
       window.CrazyGames.SDK.ad.requestAd('rewarded', {
@@ -173,7 +272,11 @@ class PortalBridge {
           if (!rewarded) dismissCb();
         }
       });
-    } else if (this.platform === 'poki' && window.PokiSDK?.rewardedBreak) {
+      return;
+    }
+
+    // 3. Poki Rewarded Video
+    if (this.platform === 'poki' && window.PokiSDK?.rewardedBreak) {
       window.PokiSDK.rewardedBreak(() => {
         this._beforeAd();
       }).then((success) => {
@@ -188,10 +291,11 @@ class PortalBridge {
         this._afterAd();
         dismissCb();
       });
-    } else {
-      this._afterAd();
-      successCb();
+      return;
     }
+
+    this._afterAd();
+    successCb();
   }
 
   _beforeAd() {
