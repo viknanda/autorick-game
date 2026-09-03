@@ -204,6 +204,18 @@ class PortalBridge {
   }
 
   /**
+   * Preload Rewarded Ad (GameDistribution best practice)
+   */
+  preloadRewardedAd() {
+    if ((this.platform === 'gamedistribution' || typeof window !== 'undefined') && window.gdsdk && typeof window.gdsdk.preloadAd === 'function') {
+      try {
+        const adType = (window.gdsdk.AdType && window.gdsdk.AdType.Rewarded) ? window.gdsdk.AdType.Rewarded : 'rewarded';
+        window.gdsdk.preloadAd(adType).catch(() => {});
+      } catch (e) {}
+    }
+  }
+
+  /**
    * Request a Rewarded Video Ad (e.g. Revive Rickshaw with 100% Health)
    * User must voluntarily opt in.
    */

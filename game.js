@@ -3438,6 +3438,9 @@ function triggerGameOver() {
   gameAudio.stopEngine();
   if (window.portalBridge) {
     window.portalBridge.gameplayStop();
+    if (typeof window.portalBridge.preloadRewardedAd === 'function') {
+      window.portalBridge.preloadRewardedAd();
+    }
   }
 
   // Save High Score
