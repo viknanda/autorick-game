@@ -7,7 +7,13 @@
   <!-- Google Fonts for Modern, Playful Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <!-- PWA & Mobile Web App Meta Tags -->
+  <meta name="theme-color" content="#FF9800">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AutoRick">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
@@ -134,6 +140,7 @@
             <button id="how-to-play-btn" class="btn secondary-btn" style="width: 100%;">How To Play 📖</button>
             <!-- Merged Audio Controller button -->
             <button id="audio-toggle-btn" class="btn sound-btn" style="width: 100%; margin-top: 8px;">Audio: Sounds & Music ON 🔊⚡</button>
+            <button id="pwa-install-btn" class="btn secondary-btn hidden" style="width: 100%; margin-top: 8px; border: 1.5px solid #FF9800; color: #FFB74D; font-weight: 800;">📲 Install App (Play Offline)</button>
           </div>
         </div>
       </div>
@@ -236,5 +243,38 @@
 
   <script src="audio.js?v=18"></script>
   <script src="game.js?v=18"></script>
+
+  <!-- PWA Service Worker & Install Handler -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js')
+          .then((reg) => console.log('[PWA] Service Worker registered in scope:', reg.scope))
+          .catch((err) => console.warn('[PWA] Service Worker registration failed:', err));
+      });
+    }
+
+    let deferredPrompt = null;
+    const installBtn = document.getElementById('pwa-install-btn');
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      if (installBtn) {
+        installBtn.classList.remove('hidden');
+      }
+    });
+
+    if (installBtn) {
+      installBtn.addEventListener('click', async () => {
+        if (!deferredPrompt) return;
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        if (outcome === 'accepted') {
+          installBtn.classList.add('hidden');
+        }
+        deferredPrompt = null;
+      });
+    }
+  </script>
 </body>
 </html>
